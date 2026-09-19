@@ -1,4 +1,4 @@
-export const en = {
+﻿export const en = {
   'nav.dashboard': 'Dashboard',
   'nav.strategies': 'Strategies',
   'nav.settings': 'Settings',
@@ -310,6 +310,8 @@ export const en = {
   'tgProxy.fakeTlsDomain': 'FakeTLS domain',
   'tgProxy.forceTestDc': 'Test DCs only',
   'tgProxy.proxyProtocol': 'PROXY protocol',
+  'tgProxy.noSecure': 'Disable TLS for CF (port 80)',
+  'tgProxy.noDirect': 'No direct DC (CF only)',
   'tgProxy.resetSettings': 'Reset settings',
   'tgProxy.resetConfirm': 'Reset TG proxy settings to defaults? (Secret and running state are kept.)',
   'tray.tgProxy': 'TG proxy',

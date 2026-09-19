@@ -46,7 +46,9 @@ const BASE_DEFAULTS = {
     workerDomains: [],
     fakeTlsDomain: '',
     forceTestDc: false,
-    proxyProtocol: false
+    proxyProtocol: false,
+    noSecure: false,
+    noDirect: false
   } as TgProxySettings
 } as const
 
@@ -219,7 +221,9 @@ export function normalizeTgProxySettings(value: unknown): TgProxySettings {
     workerDomains: normalizeDomainEntries(raw.workerDomains),
     fakeTlsDomain: normalizeOptionalDomain(raw.fakeTlsDomain),
     forceTestDc: raw.forceTestDc === true,
-    proxyProtocol: raw.proxyProtocol === true
+    proxyProtocol: raw.proxyProtocol === true,
+    noSecure: raw.noSecure === true,
+    noDirect: raw.noDirect === true
   }
 }
 

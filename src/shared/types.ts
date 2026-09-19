@@ -216,6 +216,10 @@ export interface TgProxySettings {
   forceTestDc: boolean
   /** Accept a PROXY protocol v1 header (behind nginx/haproxy). */
   proxyProtocol: boolean
+  /** Plain port 80 for CF-proxy / CF-worker upstreams (`--no-secure`). */
+  noSecure: boolean
+  /** Skip direct DC dials, fallbacks only (bare `--dc-ip` upstream). */
+  noDirect: boolean
 }
 
 /** Live statistics snapshot of the Telegram proxy. */

@@ -12,7 +12,8 @@
  * also a hand-rolled TLS+WS client).
  *
  * Parity with upstream includes FakeTLS (`ee`-secrets with masking relay /
- * 301 redirect), PROXY-protocol v1, CF-proxy + CF-Worker fallbacks,
+ * 301 redirect), PROXY-protocol v1, CF-proxy + CF-Worker fallbacks
+ * (incl. `--no-secure` plain-:80 mode and bare `--dc-ip` no-direct mode),
  * pooled WS upstreams with domain-fronting (`sprinthost.ru` SNI) and
  * exponential-backoff refill.
  *
@@ -588,7 +589,7 @@ export class RawWebSocket {
   private fragLen = 0
   closed = false
 
-  private constructor(private readonly socket: tls.TLSSocket, extra: Buffer) {
+  private constructor(private readonly socket: net.Socket, extra: Buffer) {
     if (extra.length > 0) this.buf = Buffer.from(extra)
     socket.on('data', (d: Buffer) => {
       this.buf = Buffer.concat([this.buf, d])
@@ -606,25 +607,46 @@ export class RawWebSocket {
     timeoutMs = WS_CONNECT_TIMEOUT_MS,
     wsPath = TG_PROXY_WS_PATH,
     sni?: string,
-    highWaterMark?: number
+    highWaterMark?: number,
+    secure = true
   ): Promise<RawWebSocket> {
     const hwm = highWaterMark !== undefined && Number.isFinite(highWaterMark) && highWaterMark > 0 ? Math.floor(highWaterMark) : 0
-    let socket: tls.TLSSocket
-    if (hwm > 0) {
+    // `--no-secure` (upstream `secure=False`): plain WS over port 80, no TLS.
+    // Used only for CF-proxy / CF-worker upstreams; direct Telegram DC
+    // dials always stay on 443/TLS.
+    const hwmOpts =
+      hwm > 0
+        ? ({
+            readableHighWaterMark: hwm,
+            writableHighWaterMark: hwm
+          } as net.SocketConstructorOpts)
+        : null
+    let socket: net.Socket
+    if (!secure) {
+      const plain = hwmOpts ? new net.Socket(hwmOpts) : new net.Socket()
+      plain.setNoDelay(true)
+      try {
+        await connectPlainSocket(plain, host, 80, Math.min(timeoutMs, 10000))
+        socket = plain
+      } catch (e) {
+        try {
+          plain.destroy()
+        } catch {
+          /* ignore */
+        }
+        throw e
+      }
+    } else if (hwmOpts) {
       // `--buf-kb`: backing TCP socket with explicit water marks, then TLS
       // over it (Node has no SO_RCVBUF/SO_SNDBUF API — this is the closest
       // equivalent controlling kernel↔userspace chunking; the cast is needed
       // because @types/node omits HWM in SocketConstructorOpts, but the
       // options reach stream.Duplex at runtime).
-      const hwmOpts = {
-        readableHighWaterMark: hwm,
-        writableHighWaterMark: hwm
-      } as net.SocketConstructorOpts
       const plain = new net.Socket(hwmOpts)
       plain.setNoDelay(true)
       try {
         await connectPlainSocket(plain, host, 443, Math.min(timeoutMs, 10000))
-        socket = await wrapTlsOverSocket(plain, sni ?? domain, Math.min(timeoutMs, 10000))
+        socket = await wrapTlsOverSocket(plain, sni ?? domain, Math.min(timeoutMs, 10000), sni !== undefined)
       } catch (e) {
         try {
           plain.destroy()
@@ -634,19 +656,25 @@ export class RawWebSocket {
         throw e
       }
     } else {
-      socket = tls.connect({
+      // Mirrors upstream `_ssl_ctx` / `_ssl_ctx_fronting`: direct dials verify
+      // the chain + hostname, fronted dials (`sprinthost.ru` SNI) verify the
+      // chain but skip the hostname check (cert is for web.telegram.org).
+      const fronting = sni !== undefined
+      const tlsSock = tls.connect({
         host,
         port: 443,
         servername: sni ?? domain,
-        rejectUnauthorized: false
+        rejectUnauthorized: true,
+        ...(fronting ? { checkServerIdentity: () => undefined } : {})
       })
-      socket.setNoDelay(true)
+      tlsSock.setNoDelay(true)
       try {
-        await waitForSocketConnect(socket, Math.min(timeoutMs, 10000))
+        await waitForSocketConnect(tlsSock, Math.min(timeoutMs, 10000))
       } catch (e) {
-        socket.destroy()
+        tlsSock.destroy()
         throw e
       }
+      socket = tlsSock
     }
     const wsKey = crypto.randomBytes(16).toString('base64')
     const req =
@@ -820,7 +848,7 @@ export class RawWebSocket {
   }
 }
 
-function waitForSocketConnect(socket: tls.TLSSocket, timeoutMs: number): Promise<void> {
+function waitForSocketConnect(socket: net.Socket, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     if (socket.connecting === false && !socket.destroyed) {
       resolve()
@@ -884,11 +912,16 @@ function connectPlainSocket(socket: net.Socket, host: string, port: number, time
 }
 
 /** TLS-wrap an already-connected plain socket (SNI preserved). */
-function wrapTlsOverSocket(plain: net.Socket, servername: string, timeoutMs: number): Promise<tls.TLSSocket> {
+function wrapTlsOverSocket(plain: net.Socket, servername: string, timeoutMs: number, fronting = false): Promise<tls.TLSSocket> {
   return new Promise((resolve, reject) => {
     let tlsSock: tls.TLSSocket
     try {
-      tlsSock = tls.connect({ socket: plain, servername, rejectUnauthorized: false })
+      tlsSock = tls.connect({
+        socket: plain,
+        servername,
+        rejectUnauthorized: true,
+        ...(fronting ? { checkServerIdentity: () => undefined } : {})
+      })
     } catch (e) {
       reject(e instanceof Error ? e : new Error(String(e)))
       return
@@ -921,7 +954,7 @@ function wrapTlsOverSocket(plain: net.Socket, servername: string, timeoutMs: num
   })
 }
 
-function readHttpHead(socket: tls.TLSSocket, timeoutMs: number): Promise<{ head: string; extra: Buffer }> {
+function readHttpHead(socket: net.Socket, timeoutMs: number): Promise<{ head: string; extra: Buffer }> {
   return new Promise((resolve, reject) => {
     let acc = Buffer.alloc(0)
     const timer = setTimeout(() => {
@@ -1366,6 +1399,8 @@ export class CfWorkerPool {
 
   async connectOne(workerDomains: string[], fallbackDst: string, dc: number): Promise<{ ws: RawWebSocket; domain: string } | null> {
     const path = buildCfWorkerPath(fallbackDst, dc)
+    // Mirrors upstream `secure=not proxy_config.disable_secure`.
+    const secure = !activeNoSecure
     for (const workerDomain of this.availableDomains(workerDomains)) {
       try {
         const ws = await RawWebSocket.connect(
@@ -1374,7 +1409,8 @@ export class CfWorkerPool {
           CF_CONNECT_TIMEOUT_MS,
           path,
           undefined,
-          activeHwm > 0 ? activeHwm : undefined
+          activeHwm > 0 ? activeHwm : undefined,
+          secure
         )
         return { ws, domain: workerDomain }
       } catch {
@@ -1840,6 +1876,10 @@ export interface TgProxyStartOptions {
   forceTestDc?: boolean
   /** Accept a PROXY protocol v1 header. */
   proxyProtocol?: boolean
+  /** Use plain port 80 for CF-proxy / CF-worker upstreams (`--no-secure`). */
+  noSecure?: boolean
+  /** Skip direct DC dials, use fallbacks only (bare `--dc-ip` upstream). */
+  noDirect?: boolean
 }
 
 /**
@@ -1859,6 +1899,8 @@ export function tgStartOptsFromSettings(s: {
   fakeTlsDomain: string
   forceTestDc: boolean
   proxyProtocol: boolean
+  noSecure?: boolean
+  noDirect?: boolean
 }): TgProxyStartOptions {
   let custom: Record<number, string> = {}
   for (const entry of normalizeDcIpEntries(s.dcIps)) {
@@ -1877,7 +1919,9 @@ export function tgStartOptsFromSettings(s: {
     workerDomains: [...s.workerDomains],
     fakeTlsDomain: s.fakeTlsDomain,
     forceTestDc: s.forceTestDc,
-    proxyProtocol: s.proxyProtocol
+    proxyProtocol: s.proxyProtocol,
+    noSecure: s.noSecure === true,
+    noDirect: s.noDirect === true
   }
 }
 
@@ -1935,6 +1979,8 @@ let activeWorkerDomains: string[] = []
 let activeFakeTlsDomain = ''
 let activeForceTestDc = false
 let activeProxyProtocol = false
+let activeNoSecure = false
+let activeNoDirect = false
 let cfRefreshTimer: NodeJS.Timeout | null = null
 const counters: Counters = freshCounters()
 const clients = new Set<net.Socket>()
@@ -2312,11 +2358,14 @@ function connectTcp(host: string, port: number, timeoutMs: number, highWaterMark
 
 async function cfProxyFallback(io: BridgeSocket, relayInit: Buffer, ctx: CryptoCtx, splitter: MsgSplitter | null, label: string, dc: number, isMedia: boolean, teardown: () => void): Promise<boolean> {
   const mediaTag = isMedia ? ' media' : ''
-  info('tg-proxy', `[${label}] DC${dc}${mediaTag} -> trying CF proxy`)
+  // Mirrors upstream `secure=not proxy_config.disable_secure` (`--no-secure`
+  // uses plain port 80 for CF-proxy connections).
+  const secure = !activeNoSecure
+  info('tg-proxy', `[${label}] DC${dc}${mediaTag} -> trying CF proxy${secure ? '' : ' (plain :80)'}`)
   for (const base of balancer.getDomainsForDc(dc)) {
     const domain = `kws${dc}.${base}`
     try {
-      const ws = await RawWebSocket.connect(domain, domain, CF_CONNECT_TIMEOUT_MS, TG_PROXY_WS_PATH, undefined, activeHwm > 0 ? activeHwm : undefined)
+      const ws = await RawWebSocket.connect(domain, domain, CF_CONNECT_TIMEOUT_MS, TG_PROXY_WS_PATH, undefined, activeHwm > 0 ? activeHwm : undefined, secure)
       if (balancer.updateDomainForDc(dc, base)) info('tg-proxy', `[${label}] Switched active CF domain`)
       counters.cf += 1
       await ws.send(Buffer.from(relayInit))
@@ -2361,10 +2410,12 @@ async function cfWorkerFallback(
     return true
   }
   const path = buildCfWorkerPath(fallbackDst, dc)
+  // Mirrors upstream `secure=not proxy_config.disable_secure`.
+  const secure = !activeNoSecure
   for (const workerDomain of cfWorkerPool.availableDomains([...activeWorkerDomains])) {
-    info('tg-proxy', `[${label}] DC${dc}${mediaTag} -> trying CF worker for ${fallbackDst}`)
+    info('tg-proxy', `[${label}] DC${dc}${mediaTag} -> trying CF worker for ${fallbackDst}${secure ? '' : ' (plain :80)'}`)
     try {
-      const ws = await RawWebSocket.connect(workerDomain, workerDomain, CF_CONNECT_TIMEOUT_MS, path, undefined, activeHwm > 0 ? activeHwm : undefined)
+      const ws = await RawWebSocket.connect(workerDomain, workerDomain, CF_CONNECT_TIMEOUT_MS, path, undefined, activeHwm > 0 ? activeHwm : undefined, secure)
       counters.cf += 1
       await ws.send(Buffer.from(relayInit))
       // Same as CF-proxy above: the bridge must run to completion here.
@@ -2533,14 +2584,16 @@ async function handleClient(client: net.Socket, secret: Buffer): Promise<void> {
     const mediaTag = parsed.isMedia ? ' media' : ''
     const dcKey = `${dc}${isTestDc ? 't' : ''}${parsed.isMedia ? 'm' : ''}`
     // Custom `--dc-ip` targets override the built-ins (warmup included).
-    const target = activeDcIps[dc] ?? TG_PROXY_DC_IPS[dc]
+    // `noDirect` (upstream bare `--dc-ip`) disables direct dials entirely:
+    // sessions go straight to the CF-worker / CF-proxy / TCP fallbacks.
+    const target = activeNoDirect ? undefined : (activeDcIps[dc] ?? TG_PROXY_DC_IPS[dc])
     const wsPath = isTestDc ? TG_PROXY_WS_PATH_TEST : TG_PROXY_WS_PATH
     const now = Date.now()
     let ws: RawWebSocket | null = null
 
     // Unknown DC, blacklisted WS or a cooling-down IP → straight to fallback.
     if (target === undefined) {
-      info('tg-proxy', `[${label}] DC${dc} not in config -> fallback`)
+      info('tg-proxy', `[${label}] DC${dc}${activeNoDirect ? ' direct disabled' : ' not in config'} -> fallback`)
     } else if (wsBlacklist.has(dcKey)) {
       info('tg-proxy', `[${label}] DC${dc}${mediaTag} WS blacklisted -> fallback`)
     } else if (!isTestDc && now < (ipFailUntil.get(target) ?? 0) && cfEnabled) {
@@ -2672,6 +2725,8 @@ export async function startTgProxy(opts: TgProxyStartOptions): Promise<{ host: s
   activeFakeTlsDomain = (opts.fakeTlsDomain ?? '').trim().toLowerCase()
   activeForceTestDc = opts.forceTestDc === true
   activeProxyProtocol = opts.proxyProtocol === true
+  activeNoSecure = opts.noSecure === true
+  activeNoDirect = opts.noDirect === true
   Object.assign(counters, freshCounters())
   wsBlacklist.clear()
   dcFailUntil.clear()
@@ -2732,14 +2787,16 @@ export async function startTgProxy(opts: TgProxyStartOptions): Promise<{ host: s
   info('tg-proxy', `Listening on ${listenHost}:${listenPort} (secret ${secretHex.slice(0, 6)}…). Connect: ${buildTgLink(linkHost, listenPort, secretHex, activeFakeTlsDomain)}`)
   info(
     'tg-proxy',
-    `Target DCs: ${Object.entries({ ...TG_PROXY_DC_IPS, ...activeDcIps }).map(([dc, ip]) => `DC${dc}:${ip}`).join(', ')}. ` +
-      `CF fallback: ${cfEnabled ? 'on' : 'off'}${activeFakeTlsDomain !== '' ? `, FakeTLS: ${activeFakeTlsDomain}` : ''}` +
-      `${activeForceTestDc ? ', force-test-dc' : ''}${activeProxyProtocol ? ', proxy-protocol' : ''}`
+    `Target DCs: ${activeNoDirect ? 'none (fallbacks only)' : Object.entries({ ...TG_PROXY_DC_IPS, ...activeDcIps }).map(([dc, ip]) => `DC${dc}:${ip}`).join(', ')}. ` +
+      `CF fallback: ${cfEnabled ? 'on' : 'off'}${activeNoSecure ? ' (plain :80)' : ''}${activeFakeTlsDomain !== '' ? `, FakeTLS: ${activeFakeTlsDomain}` : ''}` +
+      `${activeForceTestDc ? ', force-test-dc' : ''}${activeProxyProtocol ? ', proxy-protocol' : ''}${activeNoDirect ? ', no-direct' : ''}`
   )
   // Pre-warm idle WS sockets in the background (best effort, never blocks).
   try {
     const targets = { ...TG_PROXY_DC_IPS, ...activeDcIps }
-    wsPool.warmup(targets)
+    // With `noDirect` there is nothing to pre-warm for direct dials; worker
+    // pool warmup (fallback dsts) still applies.
+    if (!activeNoDirect) wsPool.warmup(targets)
     cfWorkerPool.warmup(targets)
   } catch {
     /* ignore */

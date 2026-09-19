@@ -1,4 +1,4 @@
-export const ru = {
+﻿export const ru = {
   'nav.dashboard': 'Дашборд',
   'nav.strategies': 'Стратегии',
   'nav.settings': 'Настройки',
@@ -310,6 +310,8 @@ export const ru = {
   'tgProxy.fakeTlsDomain': 'FakeTLS-домен',
   'tgProxy.forceTestDc': 'Только тестовые DC',
   'tgProxy.proxyProtocol': 'PROXY-протокол',
+  'tgProxy.noSecure': 'Отключить TLS для CF (порт 80)',
+  'tgProxy.noDirect': 'Без прямых к DC (только CF)',
   'tgProxy.resetSettings': 'Сбросить настройки',
   'tgProxy.resetConfirm': 'Сбросить настройки TG-прокси к значениям по умолчанию? (Секрет и запущенное состояние сохранятся.)',
   'tray.tgProxy': 'TG-прокси',

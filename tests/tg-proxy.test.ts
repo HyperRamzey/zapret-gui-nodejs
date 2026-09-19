@@ -333,6 +333,21 @@ describe('tg-proxy lifecycle (localhost, no upstream)', () => {
     })
     await stopTgProxy()
   }, 20000)
+
+  it('starts with noSecure + noDirect (v1.10.3 parity) and stops cleanly', async () => {
+    const secret = generateTgSecret()
+    const bound = await startTgProxy({
+      port: await getFreePort(),
+      secret,
+      cfProxyEnabled: true,
+      noSecure: true,
+      noDirect: true
+    })
+    expect(isTgProxyRunning()).toBe(true)
+    expect(bound.port).toBeGreaterThan(0)
+    await stopTgProxy()
+    expect(isTgProxyRunning()).toBe(false)
+  }, 20000)
 })
 
 describe('new `--host/--dc-ip/--pool-size` validators', () => {
@@ -410,7 +425,9 @@ describe('PROXY protocol + worker path + ee links', () => {
       workerDomains: ['w.com'],
       fakeTlsDomain: 'example.com',
       forceTestDc: true,
-      proxyProtocol: true
+      proxyProtocol: true,
+      noSecure: true,
+      noDirect: true
     })
     expect(opts.dcIps).toEqual({ 2: '9.9.9.9' })
     expect(opts.poolSize).toBe(2)
@@ -418,6 +435,27 @@ describe('PROXY protocol + worker path + ee links', () => {
     expect(opts.fakeTlsDomain).toBe('example.com')
     expect(opts.forceTestDc).toBe(true)
     expect(opts.proxyProtocol).toBe(true)
+    expect(opts.noSecure).toBe(true)
+    expect(opts.noDirect).toBe(true)
+  })
+
+  it('defaults noSecure/noDirect to false when absent', () => {
+    const opts = tgStartOptsFromSettings({
+      port: 1443,
+      secret: 'b'.repeat(32),
+      cfProxyEnabled: true,
+      host: '127.0.0.1',
+      dcIps: [],
+      poolSize: 4,
+      bufferKb: 256,
+      cfDomains: [],
+      workerDomains: [],
+      fakeTlsDomain: '',
+      forceTestDc: false,
+      proxyProtocol: false
+    })
+    expect(opts.noSecure).toBe(false)
+    expect(opts.noDirect).toBe(false)
   })
 
   it('reads PROXY lines with re-queued rest', async () => {

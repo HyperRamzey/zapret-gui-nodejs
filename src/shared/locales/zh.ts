@@ -1,4 +1,4 @@
-export const zh = {
+﻿export const zh = {
   'nav.dashboard': '仪表盘',
   'nav.strategies': '策略',
   'nav.settings': '设置',
@@ -310,6 +310,8 @@ export const zh = {
   'tgProxy.fakeTlsDomain': 'FakeTLS domain',
   'tgProxy.forceTestDc': 'Test DCs only',
   'tgProxy.proxyProtocol': 'PROXY protocol',
+  'tgProxy.noSecure': 'Disable TLS for CF (port 80)',
+  'tgProxy.noDirect': 'No direct DC (CF only)',
   'tgProxy.resetSettings': 'Reset settings',
   'tgProxy.resetConfirm': 'Reset TG proxy settings to defaults? (Secret and running state are kept.)',
   'tray.tgProxy': 'TG proxy',

@@ -134,9 +134,10 @@ TypeScript-порт оригинала,
 
 * Дашборд: блок «Telegram-прокси», Настройки: автозапуск прокси / CF-fallback / порт /
   адрес / IP дата-центров / пул WS / буфер сокета / свои CF-домены / Worker-домены /
-  FakeTLS-домен / тестовые DC / PROXY-протокол + кнопка сброса к дефолтам
+  FakeTLS-домен / тестовые DC / PROXY-протокол / без TLS для CF (порт 80) /
+  без прямых к DC (только CF) + кнопка сброса к дефолтам
   (secret и запущенное состояние сохраняются)
-* `settings.json → tgProxy`: `{ enabled, port, autoStart, secret, cfProxyEnabled, host, dcIps, poolSize, bufferKb, cfDomains, workerDomains, fakeTlsDomain, forceTestDc, proxyProtocol }`
+* `settings.json → tgProxy`: `{ enabled, port, autoStart, secret, cfProxyEnabled, host, dcIps, poolSize, bufferKb, cfDomains, workerDomains, fakeTlsDomain, forceTestDc, proxyProtocol, noSecure, noDirect }`
   (secret из 32 hex генерируется один раз и хранится — иначе Telegram пришлось бы
   перенастраивать после каждого перезапуска)
 * Свои CF-домены при задании вытесняют авто-пул с GitHub; Worker-домены пробуются первыми
@@ -232,7 +233,7 @@ RU • EN • UK • BE • KK • DE • FR • ES • IT • PT • NL • PL 
   * `utils/` — `targets.txt`, результаты `test results/`, флаги `check_updates.enabled` / `game_filter.enabled`
   * `strategies/` — 22 × `*.json`
   * служебные: `_backup/<timestamp>` (снапшоты перед обновлением, хранятся последние 5), `_tmp/`, `tray-icons/` (сгенерированные PNG)
-* Настройки: `%APPDATA%\zapret-gui\settings.json` (`locale`, `theme`, `autoLaunch`, `showTrayIcon`, `trayServiceMenu`, `trayStrategyMenu`, `trayNavigateMenu`, `trayGameFilterMenu`, `trayIPSetMenu`, `trayToolsMenu`, `trayQuickSettings`, `startMinimizedToTray`, `minimizeToTrayOnClose`, `activeStrategyId`, `discordFake`, `gameFake`, `tgProxy: { enabled, port, autoStart, secret, cfProxyEnabled, host, dcIps, poolSize, bufferKb, cfDomains, workerDomains, fakeTlsDomain, forceTestDc, proxyProtocol }`; старый `trayTuningMenu` мигрирует в `trayGameFilterMenu` + `trayIPSetMenu`)
+* Настройки: `%APPDATA%\zapret-gui\settings.json` (`locale`, `theme`, `autoLaunch`, `showTrayIcon`, `trayServiceMenu`, `trayStrategyMenu`, `trayNavigateMenu`, `trayGameFilterMenu`, `trayIPSetMenu`, `trayToolsMenu`, `trayQuickSettings`, `startMinimizedToTray`, `minimizeToTrayOnClose`, `activeStrategyId`, `discordFake`, `gameFake`, `tgProxy: { enabled, port, autoStart, secret, cfProxyEnabled, host, dcIps, poolSize, bufferKb, cfDomains, workerDomains, fakeTlsDomain, forceTestDc, proxyProtocol, noSecure, noDirect }`; старый `trayTuningMenu` мигрирует в `trayGameFilterMenu` + `trayIPSetMenu`)
 * Лог: `%APPDATA%\zapret-gui\app.log`
 * Dev-режим: `bundled-assets` из репозитория, данные в `<repo>/.data`, `userData` изолирован в `zapret-gui-dev` во избежание лока кэша Chromium
 

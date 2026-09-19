@@ -269,6 +269,12 @@ export default function Settings(): React.JSX.Element {
         <Row label={t('tgProxy.proxyProtocol')}>
           <Toggle value={tg?.proxyProtocol ?? false} onChange={(v) => void updateTgProxySettings({ proxyProtocol: v })} />
         </Row>
+        <Row label={t('tgProxy.noSecure')}>
+          <Toggle value={tg?.noSecure ?? false} onChange={(v) => void updateTgProxySettings({ noSecure: v })} />
+        </Row>
+        <Row label={t('tgProxy.noDirect')}>
+          <Toggle value={tg?.noDirect ?? false} onChange={(v) => void updateTgProxySettings({ noDirect: v })} />
+        </Row>
         <p className="py-1 text-xs text-slate-500 dark:text-slate-400">{t('tgProxy.restartHint')}</p>
         <div className="mt-2">
           <Btn variant="danger" disabled={tgBusy} onClick={() => void onResetTgProxy()}>

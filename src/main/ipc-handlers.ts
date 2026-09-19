@@ -572,7 +572,9 @@ export function registerIpcHandlers(): void {
       workerDomains: patch.workerDomains !== undefined ? validateDomainEntries(patch.workerDomains, 'Worker domains') : current.workerDomains,
       fakeTlsDomain: patch.fakeTlsDomain !== undefined ? validateFakeTlsDomain(patch.fakeTlsDomain) : current.fakeTlsDomain,
       forceTestDc: typeof patch.forceTestDc === 'boolean' ? patch.forceTestDc : current.forceTestDc,
-      proxyProtocol: typeof patch.proxyProtocol === 'boolean' ? patch.proxyProtocol : current.proxyProtocol
+      proxyProtocol: typeof patch.proxyProtocol === 'boolean' ? patch.proxyProtocol : current.proxyProtocol,
+      noSecure: typeof patch.noSecure === 'boolean' ? patch.noSecure : current.noSecure,
+      noDirect: typeof patch.noDirect === 'boolean' ? patch.noDirect : current.noDirect
     }
     const saved = saveSettings({ tgProxy: next })
     sendLog('tg-proxy', 'info', `TG proxy settings saved (port=${next.port}, host=${next.host}). Restart the proxy to apply.`)
