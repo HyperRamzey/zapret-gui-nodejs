@@ -15,6 +15,8 @@ import {
   normalizeTgHost
 } from './tg-proxy'
 import { isSupportedLocale, normalizeLocale, resolveSystemLocale as resolveSystemLocaleImpl, type Locale } from '../shared/i18n'
+import { isLinux } from './platform'
+import { applyLinuxAutoLaunch } from './linux-autostart'
 
 const BASE_DEFAULTS = {
   autoLaunch: false,
@@ -236,7 +238,7 @@ export function saveSettings(patch: Partial<AppSettings>): AppSettings {
   if (patch.tgProxy !== undefined) patch = { ...patch, tgProxy: normalizeTgProxySettings(patch.tgProxy) }
   const next = { ...loadSettings(), ...patch }
   persistSettings(next)
-  applyAutoLaunch(next.autoLaunch)
+  applyAutoLaunch(next.autoLaunch, next.startMinimizedToTray)
   emitSettingsChanged(next)
   return next
 }
@@ -255,13 +257,23 @@ export function resetSettings(): AppSettings {
   }
   const next = loadSettings()
   // loadSettings() only persists — make sure a stale login-item entry is off.
-  applyAutoLaunch(next.autoLaunch)
+  applyAutoLaunch(next.autoLaunch, next.startMinimizedToTray)
   emitSettingsChanged(next)
   return next
 }
 
-/** Windows auto-launch via Electron login-item settings (registry). */
-export function applyAutoLaunch(enabled: boolean): void {
+/**
+ * Apply the OS login-item entry. Windows/macOS use Electron's
+ * `setLoginItemSettings` (registry/login items); Linux uses an XDG Autostart
+ * `.desktop` file in `~/.config/autostart/` (Electron's API is a no-op
+ * there). `startMinimized` keeps the `--hidden` flag of the Linux entry in
+ * sync, so a minimized-start toggle immediately rewrites the entry.
+ */
+export function applyAutoLaunch(enabled: boolean, startMinimized = false): void {
+  if (isLinux()) {
+    applyLinuxAutoLaunch(enabled, startMinimized)
+    return
+  }
   try {
     app.setLoginItemSettings({ openAtLogin: enabled, name: 'Zapret GUI' })
   } catch {

@@ -37,6 +37,7 @@ import { IPC } from '../shared/types'
 import { translate } from '../shared/i18n'
 import type { GameFilterMode, IPSetMode, TrayPage, ZapretStatus } from '../shared/types'
 import { ensureTgProxySecret } from './ipc-handlers'
+import { shouldStartMinimized } from './linux-autostart'
 import { getTgProxyStats, getTgProxyStatus, startTgProxy, stopTgProxy, tgStartOptsFromSettings } from './tg-proxy'
 
 let mainWindow: BrowserWindow | null = null
@@ -648,7 +649,11 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     // After "relaunch as admin" the window always shows: the user clicked a
     // button and expects to see the elevated app, even with startMinimizedToTray.
-    if (settings.startMinimizedToTray && !process.argv.includes(ADMIN_RELAUNCH_ARG)) {
+    // `--hidden` (written into the Linux XDG Autostart entry when
+    // startMinimizedToTray is on) counts as a minimized start too. Without a
+    // tray icon there is nowhere to minimize to — show the window then.
+    const hiddenLaunch = shouldStartMinimized(process.argv, settings.startMinimizedToTray)
+    if (hiddenLaunch && !process.argv.includes(ADMIN_RELAUNCH_ARG) && settings.showTrayIcon) {
       // Start hidden in tray; user opens via tray icon.
     } else {
       mainWindow?.show()

@@ -126,7 +126,7 @@
 | IPSet (`lists/ipset-all.txt`) | Стратегии | `none` (`203.0.113.113/32`) / `loaded` (restore из `.backup`) / `any` (пустой файл) |
 | Фейки (`.bin`) | Стратегии | Списки из `bin/*.bin` (без `ACTIVE_*`), замена `ACTIVE_DISCORD_UDP.bin` / `ACTIVE_GAME_UDP.bin` копией выбранного фейка |
 | Автопроверка обновлений | Обновления | Флаг-файл `utils/check_updates.enabled` |
-| Автозапуск с Windows | Настройки | `app.setLoginItemSettings({ openAtLogin })` — окно при таком старте **показывается как обычно**; чтобы стартовать в фоне, включи рядом «Запускаться свёрнутым в трей» |
+| Автозапуск при входе | Настройки | Windows: `app.setLoginItemSettings({ openAtLogin })`; Linux: XDG Autostart-файл `~/.config/autostart/com.zapret.gui.desktop` (Electron API там no-op) с флагом `--hidden`, если включено «Запускаться свёрнутым в трей» — окно при таком старте **показывается как обычно**; чтобы стартовать в фоне, включи рядом «Запускаться свёрнутым в трей» |
 | Трей | Настройки | `showTrayIcon`, `minimizeToTrayOnClose`, `startMinimizedToTray`, видимость секций `trayServiceMenu` / `trayStrategyMenu` / `trayNavigateMenu` / `trayGameFilterMenu` / `trayIPSetMenu` / `trayToolsMenu` / `trayQuickSettings` |
 | Язык / Тема | Сайдбар + установщик | Сохраняются в `settings.json`, применяются мгновенно (трей перестраивается сразу через `onSettingsChanged` + по таймеру ~15с) |
 
