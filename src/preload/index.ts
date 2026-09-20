@@ -22,6 +22,7 @@ import type {
   IPSetMode,
   LogCategory,
   LogLine,
+  RelaunchAdminResult,
   StatusSnapshot,
   Strategy,
   TgProxySettings,
@@ -93,7 +94,7 @@ const api = {
   readUserList: (name: string): Promise<string> => ipcRenderer.invoke(IPC.readUserList, name),
   saveUserList: (name: string, content: string): Promise<UserListMeta> =>
     ipcRenderer.invoke(IPC.saveUserList, name, content),
-  relaunchAsAdmin: (): Promise<boolean> => ipcRenderer.invoke(IPC.relaunchAsAdmin),
+  relaunchAsAdmin: (): Promise<RelaunchAdminResult> => ipcRenderer.invoke(IPC.relaunchAsAdmin),
   exportLogs: (category?: LogCategory): Promise<string | null> => ipcRenderer.invoke(IPC.exportLogs, category ?? 'all'),
   getLogs: (category?: LogCategory): Promise<LogLine[]> => ipcRenderer.invoke(IPC.getLogs, category ?? 'all'),
   clearLogs: (category?: LogCategory): Promise<boolean> => ipcRenderer.invoke(IPC.clearLogs, category ?? 'all'),

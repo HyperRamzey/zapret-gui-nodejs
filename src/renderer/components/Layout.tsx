@@ -1393,11 +1393,13 @@ function AdminBanner(): React.JSX.Element | null {
         setPending(false)
         return
       }
-      const ok = await window.zapret.relaunchAsAdmin()
-      if (!ok) {
-        // UAC denied / launch failed: main keeps running, re-enable button.
+      const res = await window.zapret.relaunchAsAdmin()
+      if (!res.ok) {
+        // UAC denied / launch failed: main keeps running, re-enable the
+        // button and show WHY instead of failing silently.
         // Success quits the app, so pending stays true on ok === true.
         setPending(false)
+        setError(res.error || 'Failed to restart with administrator rights')
       }
     } catch (e) {
       // A failure re-enables the button and surfaces

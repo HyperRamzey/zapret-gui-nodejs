@@ -331,6 +331,11 @@ export interface UserListMeta {
   bytes: number
   exists: boolean
 }
+/** Result of "relaunch as admin": `error` carries the (OS-localized) reason. */
+export interface RelaunchAdminResult {
+  ok: boolean
+  error?: string
+}
 /** A top-level UI page that the tray menu can navigate to. */
 export type TrayPage = 'dashboard' | 'strategies' | 'settings' | 'lists' | 'updates' | 'diagnostics' | 'logs'
 

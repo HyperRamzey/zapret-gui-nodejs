@@ -162,6 +162,16 @@ export const TG_PROXY_RESTART_ARG = '--restart-tg-proxy'
  * the app in the tray.
  */
 export const ADMIN_RELAUNCH_ARG = '--admin-relaunch'
+/**
+ * True when an argv belongs to the elevated copy spawned by "relaunch as
+ * admin". Used both at startup (retry the single-instance lock instead of
+ * quitting instantly — the old instance quits with a delay) and in the
+ * `second-instance` handler (a non-elevated primary steps aside for it).
+ * Pure — covered by unit tests.
+ */
+export function isAdminHandoverArgv(argv: readonly string[]): boolean {
+  return argv.includes(ADMIN_RELAUNCH_ARG)
+}
 export const TG_PROXY_WS_PATH = '/apiws'
 export const TG_PROXY_WS_PATH_TEST = '/apiws_test'
 /** Default target IPs per DC (mirrors upstream `DC_DEFAULT_IPS`). */

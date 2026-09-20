@@ -32,7 +32,7 @@ import {
   stopLinuxService,
   installLinuxStrategy
 } from './linux-service'
-import { TG_PROXY_RESTART_ARG, ADMIN_RELAUNCH_ARG } from '../shared/constants'
+import { TG_PROXY_RESTART_ARG, ADMIN_RELAUNCH_ARG, isAdminHandoverArgv } from '../shared/constants'
 import { IPC } from '../shared/types'
 import { translate } from '../shared/i18n'
 import type { GameFilterMode, IPSetMode, TrayPage, ZapretStatus } from '../shared/types'
@@ -188,6 +188,8 @@ function toTrayStatus(s: string): ZapretStatus {
 let refreshTrayRunning = false
 let refreshTrayQueued = false
 let serviceBusy = false
+/** Set while a tray-initiated "relaunch as admin" UAC flow is in flight. */
+let trayRelaunchInFlight = false
 
 async function refreshTray(): Promise<void> {
   if (refreshTrayRunning) {
@@ -528,50 +530,66 @@ function trayCallbacks() {
           }
           return
         }
-        // Same TG-proxy handover as the IPC handler: free the listen port
-        // before the elevated copy starts, or it fails with EADDRINUSE.
-        let tgHandover = false
-        if (app.isPackaged) {
-          try {
-            if (getTgProxyStatus().status === 'running') {
-              tgHandover = true
-              info('tg-proxy', 'Stopping TG proxy listener for admin handover (elevated copy will restart it).')
-              await stopTgProxy().catch(() => undefined)
-            }
-          } catch {
-            /* best-effort */
-          }
+        // A second click while UAC is open must not spawn a duplicate
+        // elevated copy (same guard as the IPC handler).
+        if (trayRelaunchInFlight) return
+        if (await currentElevation()) {
+          showMainWindow()
+          return
         }
-        const args = [...process.argv.slice(1)]
-        if (tgHandover && !args.includes(TG_PROXY_RESTART_ARG)) args.push(TG_PROXY_RESTART_ARG)
-        if (!args.includes(ADMIN_RELAUNCH_ARG)) args.push(ADMIN_RELAUNCH_ARG)
+        trayRelaunchInFlight = true
         try {
-          app.releaseSingleInstanceLock()
-        } catch {
-          /* best-effort */
-        }
-        const ok = await relaunchAppAsAdmin(process.execPath, args)
-        if (ok && app.isPackaged) {
-          info('app', 'Restarting with administrator rights — closing this instance.')
-          setTimeout(() => app.quit(), 1000).unref?.()
-        } else {
+          // Same TG-proxy handover as the IPC handler: free the listen port
+          // before the elevated copy starts, or it fails with EADDRINUSE.
+          let tgHandover = false
+          if (app.isPackaged) {
+            try {
+              if (getTgProxyStatus().status === 'running') {
+                tgHandover = true
+                info('tg-proxy', 'Stopping TG proxy listener for admin handover (elevated copy will restart it).')
+                await stopTgProxy().catch(() => undefined)
+              }
+            } catch {
+              /* best-effort */
+            }
+          }
+          const args = [...process.argv.slice(1)]
+          if (tgHandover && !args.includes(TG_PROXY_RESTART_ARG)) args.push(TG_PROXY_RESTART_ARG)
+          if (!args.includes(ADMIN_RELAUNCH_ARG)) args.push(ADMIN_RELAUNCH_ARG)
           try {
-            app.requestSingleInstanceLock()
+            app.releaseSingleInstanceLock()
           } catch {
             /* best-effort */
           }
-          if (tgHandover) {
+          const res = await relaunchAppAsAdmin(process.execPath, args)
+          if (!res.ok) {
+            const reason = res.output.slice(0, 300) || 'Failed to start the elevated copy.'
+            warn('app', `Admin relaunch failed: ${reason}`)
             try {
-              const s = ensureTgProxySecret()
-              const bound = await startTgProxy(tgStartOptsFromSettings(s.tgProxy))
-              saveSettings({ tgProxy: { ...s.tgProxy, enabled: true, port: bound.port } })
-              info('tg-proxy', `TG proxy restored locally on ${bound.host}:${bound.port} (admin relaunch cancelled).`)
-            } catch (e) {
-              err('tg-proxy', `TG proxy restore failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`)
+              app.requestSingleInstanceLock()
+            } catch {
+              /* best-effort */
             }
-            notifyRenderer()
-            void refreshTray()
+            if (tgHandover) {
+              try {
+                const s = ensureTgProxySecret()
+                const bound = await startTgProxy(tgStartOptsFromSettings(s.tgProxy))
+                saveSettings({ tgProxy: { ...s.tgProxy, enabled: true, port: bound.port } })
+                info('tg-proxy', `TG proxy restored locally on ${bound.host}:${bound.port} (admin relaunch cancelled).`)
+              } catch (e) {
+                err('tg-proxy', `TG proxy restore failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`)
+              }
+              notifyRenderer()
+              void refreshTray()
+            }
+            return
           }
+          if (app.isPackaged) {
+            info('app', 'Restarting with administrator rights — closing this instance.')
+            setTimeout(() => app.quit(), 1000).unref?.()
+          }
+        } finally {
+          trayRelaunchInFlight = false
         }
       })()
     },
@@ -726,10 +744,58 @@ if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
 
 // Single instance: a second launch only focuses the running app instead of
 // spawning a duplicate tray icon that would fight over the same service.
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
+async function acquireSingleInstanceLock(): Promise<boolean> {
+  try {
+    if (app.requestSingleInstanceLock()) return true
+  } catch {
+    return false
+  }
+  // Elevated handover copy (`--admin-relaunch`): the old non-admin instance
+  // releases the lock BEFORE Start-Process and quits with a delay AFTER it,
+  // so the lock is usually free already — but on a slow start (or a late
+  // UAC "Yes" answered after the old instance gave up and re-acquired) it
+  // may still be held. Quitting instantly then looks exactly like the
+  // reported "clicked Yes and nothing happened": wait for the old instance
+  // to step aside instead.
+  if (!isAdminHandoverArgv(process.argv)) return false
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 500))
+    try {
+      if (app.requestSingleInstanceLock()) return true
+    } catch {
+      /* lock holder still alive — keep waiting */
+    }
+  }
+  return false
+}
+
+void acquireSingleInstanceLock().then((held) => {
+  if (!held) {
+    app.quit()
+    return
+  }
+  app.on('second-instance', (_event, argv) => {
+    // A late UAC "Yes" (answered after this instance already gave up waiting
+    // and re-acquired the lock): the elevated copy is starting now and is
+    // retrying the lock above. If WE are not elevated, step aside for it —
+    // otherwise the new copy exhausts its retries and quits ("nothing").
+    if (isAdminHandoverArgv(argv ?? [])) {
+      void currentElevation()
+        .then((admin) => {
+          if (!admin) {
+            try {
+              info('app', 'Elevated copy detected (second-instance handover) — quitting this instance.')
+            } catch {
+              /* logging is best-effort */
+            }
+            app.quit()
+          } else {
+            showMainWindow()
+          }
+        })
+        .catch(() => showMainWindow())
+      return
+    }
     showMainWindow()
   })
 
@@ -800,7 +866,7 @@ if (!app.requestSingleInstanceLock()) {
   }).catch((e) => {
     console.error(`app.whenReady failed: ${e instanceof Error ? e.message : String(e)}`)
   })
-}
+})
 
 app.on('window-all-closed', () => {
   // Keep running in tray when the tray icon is enabled (Windows + Linux).

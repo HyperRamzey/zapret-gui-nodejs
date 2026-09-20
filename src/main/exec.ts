@@ -10,6 +10,7 @@
  * @module main/exec
  */
 import { spawn, execFile } from 'node:child_process'
+import path from 'node:path'
 import { isLinux } from './platform'
 
 export interface ExecResult {
@@ -81,13 +82,32 @@ export async function isAdmin(): Promise<boolean> {
   return r.code === 0
 }
 
-/** Relaunch the whole Electron app elevated (used by the dashboard button). */
-export async function relaunchAppAsAdmin(appPath: string, appArgs: string[]): Promise<boolean> {
-  if (isLinux()) {
-    // Linux never relaunches Electron as root: the userspace app holds root
-    // through the privilege helper instead (see linux-privilege).
-    throw new Error('Not supported on Linux: grant root access instead — the app never runs as root.')
-  }
+/**
+ * How long to wait for the UAC prompt to be answered. Credential entry on a
+ * standard account easily takes longer than a minute; killing PowerShell
+ * early orphans an open consent prompt whose late "Yes" then hits a
+ * re-acquired single-instance lock and quits instantly ("clicked Yes and
+ * nothing happened"). Five minutes is enough for a human, short enough to
+ * never hang the app forever.
+ */
+export const ADMIN_RELAUNCH_TIMEOUT_MS = 300000
+
+/** Result of an elevation attempt: `output` carries the PowerShell error text. */
+export interface AdminRelaunchResult {
+  ok: boolean
+  output: string
+}
+
+/**
+ * Build the PowerShell elevation command (pure — unit-tested).
+ *
+ * `-WorkingDirectory` is pinned to the app dir: without it the elevated
+ * child starts in System32, so a per-user install (`%LocalAppData%\Programs`)
+ * and a system install (`%ProgramFiles%`) would launch with different
+ * working directories. With it both behave exactly like a normal
+ * double-click launch.
+ */
+export function buildAdminRelaunchPs(appPath: string, appArgs: string[]): string {
   const esc = (s: string): string => s.replace(/'/g, "''")
   // Filter out Electron's own argv[0] (exe path) if the caller passed
   // process.argv.slice(1) from a packaged app — passing the exe as an
@@ -95,17 +115,34 @@ export async function relaunchAppAsAdmin(appPath: string, appArgs: string[]): Pr
   const filtered = appArgs.filter((a) => a !== appPath)
   const argsPs =
     filtered.length > 0 ? ` -ArgumentList ${filtered.map((a) => `'${esc(a)}'`).join(',')}` : ''
+  // `win32` explicitly: this code only ever runs on Windows, but unit tests
+  // run on any OS — `path.dirname` would mis-split `C:\...` on POSIX.
+  const dir = path.win32.dirname(appPath)
   // NOTE: powershell.exe exits with code 0 even when Start-Process throws
   // (e.g. the user presses "No" on the UAC prompt). Without an explicit
   // try/catch + exit code every denial looked like success: the caller
   // quit the current instance while no elevated copy was starting —
   // the app "just closed". Force a non-zero exit on any failure.
-  const ps =
+  return (
     `$ErrorActionPreference='Stop'; ` +
-    `try { Start-Process -FilePath '${esc(appPath)}'${argsPs} -Verb RunAs; exit 0 } ` +
+    `try { Start-Process -FilePath '${esc(appPath)}'${argsPs} -WorkingDirectory '${esc(dir)}' -Verb RunAs; exit 0 } ` +
     `catch { Write-Host $_.Exception.Message; exit 1 }`
-  const r = await runPowershell(ps, 60000)
-  return r.code === 0
+  )
+}
+
+/** Relaunch the whole Electron app elevated (used by the dashboard button). */
+export async function relaunchAppAsAdmin(
+  appPath: string,
+  appArgs: string[],
+  opts: { timeoutMs?: number } = {}
+): Promise<AdminRelaunchResult> {
+  if (isLinux()) {
+    // Linux never relaunches Electron as root: the userspace app holds root
+    // through the privilege helper instead (see linux-privilege).
+    throw new Error('Not supported on Linux: grant root access instead — the app never runs as root.')
+  }
+  const r = await runPowershell(buildAdminRelaunchPs(appPath, appArgs), opts.timeoutMs ?? ADMIN_RELAUNCH_TIMEOUT_MS)
+  return { ok: r.code === 0, output: `${r.stdout}\n${r.stderr}`.trim() }
 }
 
 /** Spawn a long-lived child (foreground winws test / test script). */

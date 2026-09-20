@@ -9,7 +9,7 @@ import type { ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { IPC } from '../shared/types'
-import type { AppSettings, GameFilterMode, IPSetMode, LogCategory, Strategy, TgProxySettings } from '../shared/types'
+import type { AppSettings, GameFilterMode, IPSetMode, LogCategory, RelaunchAdminResult, Strategy, TgProxySettings } from '../shared/types'
 import {
   getStatus,
   installStrategy,
@@ -746,70 +746,88 @@ export function registerIpcHandlers(): void {
     return meta
   })
 
-  ipcMain.handle(IPC.relaunchAsAdmin, async () => {
+  // Set while a "relaunch as admin" UAC flow is in flight: a second click
+  // (banner + tray, double-click) must not open a second UAC prompt that
+  // would spawn a duplicate elevated copy fighting over the lock.
+  let relaunchInFlight = false
+  ipcMain.handle(IPC.relaunchAsAdmin, async (): Promise<RelaunchAdminResult> => {
     if (isLinux()) {
       // Linux never relaunches Electron as root — use ensureRoot instead.
       throw new Error('Not supported on Linux: use Grant root access — the app never runs as root.')
     }
-    const exe = process.execPath
-    // If the TG proxy listener is up, stop it BEFORE Start-Process so the
-    // elevated copy can bind the same port. Otherwise the new instance hits
-    // EADDRINUSE during autostart and stays in "Ошибка" until manual restart.
-    // (In dev mode the old instance stays alive — no handover there.)
-    let tgHandover = false
-    if (app.isPackaged) {
-      try {
-        if (getTgProxyStatus().status === 'running') {
-          tgHandover = true
-          sendLog('tg-proxy', 'info', 'Stopping TG proxy listener for admin handover (elevated copy will restart it).')
-          await stopTgProxy().catch(() => undefined)
-        }
-      } catch {
-        /* best-effort */
-      }
-    }
-    const args = [...process.argv.slice(1)]
-    if (tgHandover && !args.includes(TG_PROXY_RESTART_ARG)) args.push(TG_PROXY_RESTART_ARG)
-    // The elevated copy must show its window even with startMinimizedToTray.
-    if (!args.includes(ADMIN_RELAUNCH_ARG)) args.push(ADMIN_RELAUNCH_ARG)
-    // Single-instance lock MUST be released BEFORE Start-Process: otherwise
-    // the elevated copy sees the lock held, hits `requestSingleInstanceLock()
-    // === false` and quits instantly — then this instance quits too and the
-    // app "just closes" with nothing running.
+    if (relaunchInFlight) return { ok: true }
+    if (await isAdmin()) return { ok: true }
+    relaunchInFlight = true
     try {
-      app.releaseSingleInstanceLock()
-    } catch {
-      /* best-effort */
-    }
-    const ok = await relaunchAppAsAdmin(exe, args)
-    if (ok && app.isPackaged) {
-      // Elevated copy is starting — close this non-admin instance.
-      // Delayed so the IPC response is delivered before teardown.
-      // (In dev mode we stay alive: a raw elevated electron would lack the dev env.)
-      sendLog('app', 'info', 'Restarting with administrator rights — closing this instance.')
-      setTimeout(() => app.quit(), 1000).unref?.()
-    } else {
-      // UAC denied / launch failed (or dev mode): keep running as single instance.
+      const exe = process.execPath
+      // If the TG proxy listener is up, stop it BEFORE Start-Process so the
+      // elevated copy can bind the same port. Otherwise the new instance hits
+      // EADDRINUSE during autostart and stays in "Ошибка" until manual restart.
+      // (In dev mode the old instance stays alive — no handover there.)
+      let tgHandover = false
+      if (app.isPackaged) {
+        try {
+          if (getTgProxyStatus().status === 'running') {
+            tgHandover = true
+            sendLog('tg-proxy', 'info', 'Stopping TG proxy listener for admin handover (elevated copy will restart it).')
+            await stopTgProxy().catch(() => undefined)
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+      const args = [...process.argv.slice(1)]
+      if (tgHandover && !args.includes(TG_PROXY_RESTART_ARG)) args.push(TG_PROXY_RESTART_ARG)
+      // The elevated copy must show its window even with startMinimizedToTray.
+      if (!args.includes(ADMIN_RELAUNCH_ARG)) args.push(ADMIN_RELAUNCH_ARG)
+      // Single-instance lock MUST be released BEFORE Start-Process: otherwise
+      // the elevated copy sees the lock held, hits `requestSingleInstanceLock()
+      // === false` and quits instantly — then this instance quits too and the
+      // app "just closes" with nothing running.
       try {
-        app.requestSingleInstanceLock()
+        app.releaseSingleInstanceLock()
       } catch {
         /* best-effort */
       }
-      if (tgHandover) {
-        // We stopped the listener but no elevated copy is coming — bring it
-        // back locally so the proxy isn't left dead after a cancelled UAC.
+      const res = await relaunchAppAsAdmin(exe, args)
+      if (!res.ok) {
+        // UAC denied / launch failed (or dev mode): keep running as single
+        // instance. The PowerShell message (OS-localized, e.g. "cancelled by
+        // user" or "file not found") is returned so the UI can show WHY
+        // instead of failing silently ("clicked Yes and nothing happened").
+        const reason = res.output.slice(0, 300) || 'Failed to start the elevated copy.'
+        sendLog('app', 'warn', `Admin relaunch failed: ${reason}`)
         try {
-          const s = ensureTgProxySecret()
-          const bound = await startTgProxy(tgStartOptsFromSettings(s.tgProxy))
-          saveSettings({ tgProxy: { ...s.tgProxy, enabled: true, port: bound.port } })
-          sendLog('tg-proxy', 'info', `TG proxy restored locally on ${bound.host}:${bound.port} (admin relaunch cancelled).`)
-        } catch (e) {
-          sendLog('tg-proxy', 'error', `TG proxy restore failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`)
+          app.requestSingleInstanceLock()
+        } catch {
+          /* best-effort */
         }
-        safeSend(IPC.tgProxyStatusChanged)
+        if (tgHandover) {
+          // We stopped the listener but no elevated copy is coming — bring it
+          // back locally so the proxy isn't left dead after a cancelled UAC.
+          try {
+            const s = ensureTgProxySecret()
+            const bound = await startTgProxy(tgStartOptsFromSettings(s.tgProxy))
+            saveSettings({ tgProxy: { ...s.tgProxy, enabled: true, port: bound.port } })
+            sendLog('tg-proxy', 'info', `TG proxy restored locally on ${bound.host}:${bound.port} (admin relaunch cancelled).`)
+          } catch (e) {
+            sendLog('tg-proxy', 'error', `TG proxy restore failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`)
+          }
+          safeSend(IPC.tgProxyStatusChanged)
+        }
+        return { ok: false, error: reason }
       }
+      if (app.isPackaged) {
+        // Elevated copy is starting — close this non-admin instance.
+        // Delayed so the IPC response is delivered before teardown.
+        // (In dev mode we stay alive: a raw elevated electron would lack the dev env.)
+        sendLog('app', 'info', 'Restarting with administrator rights — closing this instance.')
+        setTimeout(() => app.quit(), 1000).unref?.()
+      }
+      return { ok: true }
+    } finally {
+      relaunchInFlight = false
     }
-    return ok
   })
 
   ipcMain.handle(IPC.getLogs, async (_e, category?: LogCategory) => getBufferedLogs(normalizeLogCategory(category)))
