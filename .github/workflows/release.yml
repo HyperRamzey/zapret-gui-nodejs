@@ -1,6 +1,9 @@
-# Create a GitHub Release with auto-generated changelog when a v* tag is pushed.
+# Build both platforms and publish ONE GitHub Release when a v* tag is pushed.
+#
+# Layout: build-win + build-linux run in parallel, then the publish job
+# downloads both artifact sets and creates the Release exactly once.
 # This is the ONLY release publisher: keep publishing out of build.yml,
-# otherwise the installer (+ .blockmap) lands in the Release twice.
+# otherwise installers land in the Release twice.
 name: release
 
 on:
@@ -11,7 +14,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build-win:
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -61,17 +64,126 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Linux packaging tools
+        # electron-builder needs rpm tooling for the .rpm target and fakeroot
+        # for deterministic file ownership inside the .deb.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm fakeroot
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Electron toolchain
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-tools-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-tools-${{ runner.os }}-
+
+      - name: Verify bundled assets
+        run: |
+          if [ ! -f 'bundled-assets/bin/nfqws' ]; then
+            echo 'bundled-assets/bin/nfqws missing. Commit bundled-assets/ or add a step that downloads the upstream release ZIP.' >&2
+            exit 1
+          fi
+          if [ ! -x 'bundled-assets/bin/nfqws' ]; then
+            echo 'bundled-assets/bin/nfqws lost its +x bit — fixing for this build (check .gitattributes / fileMode).' >&2
+            chmod +x bundled-assets/bin/nfqws
+          fi
+          if [ ! -f 'build/app-icon.png' ]; then
+            echo 'build/app-icon.png missing (referenced by electron-builder.yml linux.icon).' >&2
+            exit 1
+          fi
+
+      - name: Build
+        # Retried inline in bash: nick-fields/retry is stuck on Node 20.
+        timeout-minutes: 75
+        run: |
+          attempt=0
+          maxAttempts=3
+          while true; do
+            attempt=$((attempt + 1))
+            if npm run build:linux; then break; fi
+            if [ "$attempt" -ge "$maxAttempts" ]; then
+              echo "npm run build:linux failed after $maxAttempts attempts." >&2
+              exit 1
+            fi
+            echo "Build attempt $attempt/$maxAttempts failed, retrying in 10s…"
+            sleep 10
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/latest-linux.yml
+          if-no-files-found: error
+
+  publish:
+    needs: [build-win, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: release-windows
+          path: release-assets/win
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: release-linux
+          path: release-assets/linux
+
       - name: Generate changelog
         id: changelog
-        shell: pwsh
         run: |
-          $prev = (git describe --tags --abbrev=0 HEAD~1 2>$null)
-          if (-not $prev) { $prev = (git rev-list --max-parents=0 HEAD) }
-          $log = (git log "$prev..HEAD" --pretty=format:'- %s (%h)') -join "`n"
-          if (-not $log) { $log = '- maintenance build' }
-          "notes<<EOF" >> $env:GITHUB_OUTPUT
-          $log >> $env:GITHUB_OUTPUT
-          "EOF" >> $env:GITHUB_OUTPUT
+          prev=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          log=$(git log "$prev..HEAD" --pretty=format:'- %s (%h)')
+          if [ -z "$log" ]; then log='- maintenance build'; fi
+          {
+            echo 'notes<<EOF'
+            echo "$log"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
@@ -83,11 +195,16 @@ jobs:
             ${{ steps.changelog.outputs.notes }}
 
             ### Install
-            - Download `Zapret-GUI-Setup-*.exe` and run as Administrator.
+            - Windows: download `Zapret-GUI-Setup-*.exe` and run as Administrator.
+            - Linux (Debian/Ubuntu): `sudo apt install ./Zapret-GUI-*.deb`
+            - Linux (Fedora/RHEL): `sudo dnf install ./Zapret-GUI-*.rpm`
           files: |
-            dist/*.exe
-            dist/*.blockmap
-            dist/latest.yml
+            release-assets/win/*.exe
+            release-assets/win/*.blockmap
+            release-assets/win/latest.yml
+            release-assets/linux/*.deb
+            release-assets/linux/*.rpm
+            release-assets/linux/latest-linux.yml
           draft: false
           prerelease: false
         env:

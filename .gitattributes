@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Engine binaries and fake payloads must never get LF normalization
+# (a CRLF-mangled nfqws or .bin fake breaks the Linux build at runtime).
+bundled-assets/bin/** -text
