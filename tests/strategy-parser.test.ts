@@ -10,7 +10,9 @@ import {
   materializeArgs,
   materializeArgsForSpawn,
   parseBatContent,
-  quoteArg
+  quoteArg,
+  extractListFileRefs,
+  stubContentForListFile
 } from '../src/main/strategy-parser'
 
 const SAMPLE_BAT = [
@@ -107,5 +109,42 @@ describe('parseBatContent (real general.bat)', () => {
     expect(strategy.desyncMethods).toContain('multisplit')
     expect(strategy.rawArgs).toContain('<GAME_TCP>')
     expect(warnings).toEqual([])
+  })
+})
+
+describe('extractListFileRefs', () => {
+  it('collects hostlist/ipset files, deduped', () => {
+    expect(
+      extractListFileRefs([
+        '--filter-udp=443',
+        '--hostlist="/d/lists/list-general.txt"',
+        '--hostlist-exclude=/d/lists/list-exclude.txt',
+        '--ipset-exclude="/d/lists/ipset-exclude-user.txt"',
+        '--hostlist="/d/lists/list-general.txt"',
+        '--new'
+      ])
+    ).toEqual([
+      '/d/lists/list-general.txt',
+      '/d/lists/list-exclude.txt',
+      '/d/lists/ipset-exclude-user.txt'
+    ])
+  })
+
+  it('ignores inline domains, wf args and unmaterialized placeholders', () => {
+    expect(
+      extractListFileRefs([
+        '--wf-tcp=80,443',
+        '--filter-tcp=2053 --hostlist-domains=discord.media',
+        '--hostlist="<LISTS>/list-general.txt"',
+        '--dpi-desync=fake'
+      ])
+    ).toEqual([])
+  })
+})
+
+describe('stubContentForListFile', () => {
+  it('uses the sentinel for ipset lists, a placeholder domain otherwise', () => {
+    expect(stubContentForListFile('ipset-exclude-user.txt')).toBe('203.0.113.113/32\n')
+    expect(stubContentForListFile('/x/list-general-user.txt')).toContain('domain.example.abc')
   })
 })

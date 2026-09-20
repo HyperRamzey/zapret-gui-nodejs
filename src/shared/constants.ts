@@ -8,6 +8,19 @@ export const SERVICE_NAME = 'zapret'
 export const WINDIVERT_SERVICE = 'WinDivert'
 export const WINWS_EXE = 'winws.exe'
 
+/** Linux engine binary (bol-van/zapret NFQUEUE userspace daemon). */
+export const NFQWS_BIN = 'nfqws'
+/** Linux nftables identity (mirrors zapret-discord-youtube-linux). */
+export const NFT_FAMILY = 'inet'
+export const NFT_TABLE = 'zapret'
+export const NFT_QUEUE_NUM = 220
+export const NFT_MARK = '0x40000000'
+/** System hosts file per platform (resolved at runtime). */
+export const LINUX_HOSTS_PATH = '/etc/hosts'
+/** Native package dependencies for apt (deb) / dnf (rpm). */
+export const LINUX_DEB_DEPENDS = ['nftables', 'iproute2', 'procps']
+export const LINUX_RPM_REQUIRES = ['nftables', 'iproute', 'procps-ng']
+
 export const UPSTREAM_OWNER = 'Flowseal'
 export const UPSTREAM_REPO = 'zapret-discord-youtube'
 export const UPSTREAM_BRANCH = 'main'
@@ -28,6 +41,11 @@ export const ENGINE_BIN_FILES = [
   'ip2net.exe',
   'killall.exe'
 ] as const
+/** Linux engine binary shipped in `bundled-assets/bin/` (bol-van/zapret `linux-x86_64`). */
+export const ENGINE_LINUX_BIN_FILES = ['nfqws'] as const
+/** Windows-only files never seeded into the data dir on Linux (and vice versa). */
+export const WINDOWS_ONLY_BIN_FILES = [...ENGINE_BIN_FILES] as const
+export const LINUX_ONLY_BIN_FILES = [...ENGINE_LINUX_BIN_FILES] as const
 export const ENGINE_VERSION_FILE = 'engine-version.txt'
 
 export const APP_OWNER = 'AvenCores'

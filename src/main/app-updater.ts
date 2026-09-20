@@ -40,6 +40,17 @@ export function getAppVersion(): string {
   }
 }
 
+/**
+ * True when an updater failure only means "no update metadata was published
+ * for this platform" — e.g. `latest-linux.yml` 404 because the release ships
+ * Windows assets only. That is not an error worth a red banner on every
+ * startup; the Updates page links GitHub releases directly.
+ * Pure — covered by unit tests.
+ */
+export function isMissingUpdateMetadataError(msg: string): boolean {
+  return /latest-[a-z0-9]+\.yml/i.test(msg) && /\b404\b/.test(msg)
+}
+
 function buildInfo(availableVersion: string | null): AppUpdateInfo {
   return {
     currentVersion: getAppVersion(),
@@ -277,6 +288,10 @@ export function setupAutoUpdater(): void {
     downloading = false
     downloadingVersion = null
     const msg = String((e as Error)?.message ?? e).slice(0, 300)
+    if (isMissingUpdateMetadataError(msg)) {
+      info('updater', `No update metadata published for this platform (${msg.slice(0, 120)}).`)
+      return
+    }
     err('updater', `autoUpdater error: ${msg}`)
     // Reset the banner / Updates page spinner when the download was started
     // from the native dialog (no awaiting renderer to catch the rejection).

@@ -33,10 +33,30 @@
 плюс встроенный MTProto-прокси для Telegram Desktop (мост MTProto → WebSocket, порт `127.0.0.1:1443`).
 
 Стек: **Electron + React + TypeScript + TailwindCSS + zustand**,
-установщик через **electron-builder (NSIS)**, автообновление приложения через **electron-updater**.
+установщик через **electron-builder (NSIS / deb / rpm)**, автообновление приложения через **electron-updater**.
 
-> Только Windows 10/11 x64. Требуются права администратора
+> Windows 10/11 x64: требуются права администратора
 > (драйвер WinDivert + служба `zapret` + файл hosts).
+>
+> Linux x64: поддерживается бэкенд **только nftables** (`nfqws` + таблица `inet zapret`,
+> по мотивам [zapret-discord-youtube-linux](https://github.com/Sergeydigl3/zapret-discord-youtube-linux)).
+> Нативные пакеты: **.deb** (apt) и **.rpm** (dnf), зависимости: `nftables`, `iproute2`/`iproute`,
+> `procps`/`procps-ng`, `polkit` (для системного запроса пароля).
+>
+> Приложение **никогда не запускается от root**: root-права запрашиваются один раз
+> (приоритет — `sudo` с графическим askpass: `ssh-askpass` либо обёртка над
+> `zenity`/`kdialog`; если askpass не запускается — fallback на диалог `pkexec`)
+> и удерживаются весь сеанс (`sudo -v` keep-alive; сам Electron всегда остаётся
+> пользовательским процессом). Фоновые опросы статуса строго неинтерактивны (`sudo -n`,
+> `pkexec --disable-internal-agent`) — диалоги появляются только по явному клику
+> (кнопка/трей/старт/стоп), а не каждые 15 секунд. Не запускайте приложение через
+> `sudo` — оно откажется стартовать.
+> Движок `nfqws` (bol-van/zapret `linux-x86_64`, сейчас v72.13) уже встроен
+> в `bundled-assets/bin/` — скачивание через «Обновления» нужно только для
+> перехода на другую версию. Демон запускается с `--user=<твой логин>` (сброс
+> root на desktop-пользователя вместо `nobody`), поэтому списки в `~/.config`
+> доступны и при `700` на `$HOME`; недостающие list-файлы приложение
+> довосстанавливает само (из бандла или safe-stub) перед каждым запуском.
 > 
 <img width="1609" height="926" alt="1" src="https://i.ibb.co/6JYnxWSc/1.png" />
 
@@ -250,6 +270,10 @@ npm run generate:strategies  # перепарсить bundled-assets/bat/*.bat �
 npm run build                # generate:strategies + electron-vite build
 npm run build:win            # установщик NSIS в dist/ (--publish never)
 npm run build:win:publish    # то же + публикация в GitHub Releases (--publish always)
+npm run build:linux          # пакеты .deb + .rpm в dist/ (только нативные, для apt и dnf)
+npm run build:deb            # только .deb (apt)
+npm run build:rpm            # только .rpm (dnf)
+npm run build:linux:publish  # то же + публикация в GitHub Releases (--publish always)
 npm run clean                # удалить out/ и dist/ (scripts/clean.mjs)
 npm run rebuild              # clean + полная пересборка из исходников
 npm run icon                 # сгенерировать иконки (scripts/make-icon.mjs)
@@ -259,7 +283,7 @@ npm run preview              # electron-vite preview
 `npm run generate:strategies` автоматически выполняется перед каждой сборкой.
 В CI `bundled-assets/` уже закоммичен, скрипт только идемпотентно пересинхронизирует JSON-конфиги.
 
-Тесты (vitest, 18 файлов + `setup.ts`): `strategy-parser`, `service-manager`, `strategies`, `strategy-updater`, `diagnostics-detail`, `exec`, `i18n-25`, `locale-tray`, `config-tester`, `installer-update`, `settings-notify`, `status-dot`, `user-lists`, `tg-proxy`, `tg-proxy-parity`, `app-reset`, `app-updater-autocheck`, `data-seed-flag` (50 тестов прокси: handshake roundtrip по схеме obfuscated2, relay-init, `MsgSplitter`, pause/resume dial-gap регрессия, lifecycle на свободном порту, валидаторы host/DC/domain, PROXY-строка, worker-путь, ee-ссылки, FakeTLS verify/hello/record layer + parity с оригиналом: fronting-пул/ротация/бэкофф, CF-worker пул, over-read буфер FakeTLS, PROXY peek без заголовка, censor доменов, LAN IP для `0.0.0.0`).
+Тесты (vitest, 19 файлов + `setup.ts`): `strategy-parser`, `service-manager`, `strategies`, `strategy-updater`, `diagnostics-detail`, `exec`, `i18n-25`, `locale-tray`, `config-tester`, `installer-update`, `settings-notify`, `status-dot`, `user-lists`, `tg-proxy`, `tg-proxy-parity`, `app-reset`, `app-updater-autocheck`, `data-seed-flag`, `linux-backend` (nftables-команды, парсинг `--wf-*`, санитизация интерфейса, elevator-argv) (50 тестов прокси: handshake roundtrip по схеме obfuscated2, relay-init, `MsgSplitter`, pause/resume dial-gap регрессия, lifecycle на свободном порту, валидаторы host/DC/domain, PROXY-строка, worker-путь, ee-ссылки, FakeTLS verify/hello/record layer + parity с оригиналом: fronting-пул/ротация/бэкофф, CF-worker пул, over-read буфер FakeTLS, PROXY peek без заголовка, censor доменов, LAN IP для `0.0.0.0`).
 
 CI (`.github/workflows/`): `build.yml` + `release.yml`.
 

@@ -208,7 +208,7 @@ export interface TrayLabels {
 }
 
 /** Build tray labels for a locale (pure — covered by unit tests). */
-export function getTrayLabels(locale: Locale, status: ZapretStatus): TrayLabels {
+export function getTrayLabels(locale: Locale, status: ZapretStatus, platform: 'win32' | 'linux' | 'other' = 'win32'): TrayLabels {
   const t = (key: I18nKey): string => translate(locale, key)
   return {
     status: t(`status.${status}` as I18nKey),
@@ -240,7 +240,7 @@ export function getTrayLabels(locale: Locale, status: ZapretStatus): TrayLabels 
     autoLaunch: t('settings.autoLaunch'),
     minimizeToTray: t('settings.tray'),
     startMinimized: t('settings.startMinimized'),
-    relaunchAdmin: t('dashboard.relaunchAdmin'),
+    relaunchAdmin: platform === 'linux' ? t('tray.grantRoot') : t('dashboard.relaunchAdmin'),
     openData: t('tray.openData'),
     exportLogs: t('tray.exportLogs'),
     version: t('updates.app'),

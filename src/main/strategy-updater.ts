@@ -250,9 +250,24 @@ export async function checkHosts(): Promise<HostsCheck> {
   return { needsUpdate: !currentHasFirst || !currentHasLast, firstLine, lastLine, remoteContent: remote, currentHasFirst, currentHasLast }
 }
 
-/** Absolute path of the Windows system hosts file. */
+/** Absolute path of the system hosts file (per platform). */
 export function getSystemHostsPath(): string {
+  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') return '/etc/hosts'
   return path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
+}
+
+/**
+ * True when a hosts path needs root to touch: only the real system file.
+ * Unit tests (and custom paths) use temp files owned by the user — those go
+ * through plain `fs` even on Linux, otherwise every test would block on a
+ * pkexec/sudo password prompt.
+ */
+function hostsPathNeedsPrivilege(hostsPath: string): boolean {
+  try {
+    return path.resolve(hostsPath) === path.resolve(getSystemHostsPath())
+  } catch {
+    return false
+  }
 }
 
 function isReadonlyFile(p: string): boolean {
@@ -318,7 +333,7 @@ export async function applyHosts(remoteContent: string, opts?: { hostsPath?: str
   // destroy the original hosts after the first run.
   const backupPath = `${hostsPath}.zapret-gui.bak`
   try {
-    if (!fs.existsSync(backupPath)) fs.copyFileSync(hostsPath, backupPath)
+    if (!fs.existsSync(backupPath)) await backupHostsFile(hostsPath, backupPath)
   } catch (e) {
     throw hostsWriteError('back up', hostsPath, e)
   }
@@ -340,6 +355,26 @@ async function writeHostsFile(hostsPath: string, next: string): Promise<void> {
     fs.writeFileSync(tmp, next, 'utf8')
   } catch (e) {
     throw hostsWriteError('stage', hostsPath, e)
+  }
+  if ((process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') && hostsPathNeedsPrivilege(hostsPath)) {
+    // /etc/hosts is root-owned: install via the privilege helper so the
+    // userspace app never runs as root.
+    try {
+      const { runPrivileged } = await import('./linux-privilege')
+      const cp = await runPrivileged('cp', [tmp, hostsPath], 15000)
+      if (cp.code !== 0) {
+        throw hostsWriteError('write', hostsPath, new Error(`${cp.stdout}\n${cp.stderr}`.trim().slice(0, 300) || `exit ${cp.code}`))
+      }
+      await runPrivileged('chmod', ['644', hostsPath], 10000)
+    } finally {
+      try {
+        fs.rmSync(tmp, { force: true })
+        fs.rmdirSync(path.dirname(tmp))
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+    return
   }
   const wasReadonly = isReadonlyFile(hostsPath)
   try {
@@ -469,12 +504,23 @@ export async function removeHosts(opts?: RemoveHostsOptions): Promise<boolean> {
   // Keep the very first backup forever (same policy as applyHosts).
   const backupPath = `${hostsPath}.zapret-gui.bak`
   try {
-    if (!fs.existsSync(backupPath)) fs.copyFileSync(hostsPath, backupPath)
+    if (!fs.existsSync(backupPath)) await backupHostsFile(hostsPath, backupPath)
   } catch (e) {
     throw hostsWriteError('back up', hostsPath, e)
   }
   await writeHostsFile(hostsPath, next)
   return true
+}
+
+/** Copy the hosts file to its `.zapret-gui.bak` backup (root-aware on Linux). */
+async function backupHostsFile(hostsPath: string, backupPath: string): Promise<void> {
+  if ((process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') && hostsPathNeedsPrivilege(hostsPath)) {
+    const { runPrivileged } = await import('./linux-privilege')
+    const r = await runPrivileged('cp', ['-n', hostsPath, backupPath], 15000)
+    if (r.code !== 0) throw new Error(`${r.stdout}\n${r.stderr}`.trim().slice(0, 300) || `exit ${r.code}`)
+    return
+  }
+  fs.copyFileSync(hostsPath, backupPath)
 }
 
 /**
@@ -633,6 +679,22 @@ function pruneOldBackups(dataDir: string, keep = 5): void {
 }
 
 function expandArchive(zipPath: string, dest: string): Promise<void> {
+  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+    return new Promise((resolve, reject) => {
+      // Prefer system unzip (handles large GitHub zips); fall back to
+      // python3 zipfile when unzip is missing (minimal containers).
+      execFile('unzip', ['-o', '-q', zipPath, '-d', dest], { timeout: 120000 }, (error, _stdout, stderr) => {
+        if (!error) {
+          resolve()
+          return
+        }
+        execFile('python3', ['-c', 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', zipPath, dest], { timeout: 120000 }, (err2, _o2, stderr2) => {
+          if (err2) reject(new Error(`Archive extract failed: ${String(stderr || stderr2 || err2).slice(0, 500)}`))
+          else resolve()
+        })
+      })
+    })
+  }
   return new Promise((resolve, reject) => {
     // Paths come from %APPDATA% and may contain `'` (e.g. `O'Brien`).
     // PowerShell single-quoted strings escape `'` by doubling it (`''`).
@@ -861,8 +923,18 @@ export async function updateEngineToTag(
   // winws.exe is locked while the service runs — quiesce best-effort so the
   // copy below does not fail with EBUSY/EPERM (user restarts it afterwards).
   say(`Stopping zapret service before engine update (if running)...`)
-  await runBestEffort('net.exe', ['stop', 'zapret'], 20000)
-  await runBestEffort('taskkill.exe', ['/IM', 'winws.exe', '/F'], 10000)
+  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+    try {
+      const { runPrivileged } = await import('./linux-privilege')
+      const { NFQWS_MATCH_PATTERN } = await import('./linux-service')
+      await runPrivileged('pkill', ['-f', NFQWS_MATCH_PATTERN], 10000).catch(() => undefined)
+    } catch {
+      /* best-effort */
+    }
+  } else {
+    await runBestEffort('net.exe', ['stop', 'zapret'], 20000)
+    await runBestEffort('taskkill.exe', ['/IM', 'winws.exe', '/F'], 10000)
+  }
 
   const zipUrl = engineAssetUrl(cleanTag)
   say(`Downloading zapret engine ${cleanTag} ...`)
@@ -886,6 +958,10 @@ export async function updateEngineToTag(
   fs.mkdirSync(extractDir, { recursive: true })
   await expandArchive(zipPath, extractDir)
   onProgress?.({ percent: 75, transferred: 0, total: null })
+
+  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+    return installLinuxEngine(extractDir, dataBin, backupDir, cleanTag, say, onProgress)
+  }
 
   const root = singleChildDir(extractDir) ?? extractDir
   const srcWin = path.join(root, ...ENGINE_WIN64_DIR.split('/'))
@@ -943,6 +1019,136 @@ export async function updateEngineToTag(
   fs.rmSync(extractDir, { recursive: true, force: true })
   say(`Engine updated to ${cleanTag}: ${filesUpdated.length} files.`)
   return { tag: cleanTag, filesUpdated, backupDir }
+}
+
+/**
+ * Linux engine install: locate the `nfqws` binary anywhere inside the
+ * extracted release tree (layout differs between tags:
+ * `binaries/linux-x86_64/`, `binaries/nfqws`, or top-level `nfqws`),
+ * install it into `data/bin/` with +x, refresh overlapping fakes.
+ */
+function installLinuxEngine(
+  extractDir: string,
+  dataBin: string,
+  backupDir: string,
+  cleanTag: string,
+  say: (t: string) => void,
+  onProgress?: ProgressCb
+): { tag: string; filesUpdated: string[]; backupDir: string } {
+  const root = singleChildDir(extractDir) ?? extractDir
+  const filesUpdated: string[] = []
+  // Candidate dirs first (fast path), then a bounded recursive search.
+  const candidates = [
+    path.join(root, 'binaries', 'linux-x86_64', 'nfqws'),
+    path.join(root, 'binaries', 'linux-x86-64', 'nfqws'),
+    path.join(root, 'binaries', 'nfqws'),
+    path.join(root, 'nfqws'),
+    path.join(root, 'bin', 'nfqws')
+  ]
+  let srcNfqws: string | null = null
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) {
+        srcNfqws = c
+        break
+      }
+    } catch {
+      /* next */
+    }
+  }
+  if (!srcNfqws) {
+    srcNfqws = findFileRecursive(root, 'nfqws', 4)
+  }
+  if (!srcNfqws) throw new Error(`Linux nfqws binary not found in ${cleanTag} release asset`)
+  fs.mkdirSync(dataBin, { recursive: true })
+  const dest = path.join(dataBin, 'nfqws')
+  if (!fs.existsSync(dest) || !filesEqual(srcNfqws, dest)) {
+    fs.copyFileSync(srcNfqws, dest)
+    filesUpdated.push('bin/nfqws')
+  }
+  try {
+    fs.chmodSync(dest, 0o755)
+  } catch {
+    /* best-effort (FAT/odd perms) */
+  }
+  // Refresh overlapping fake payloads (`files/fake/`), same policy as Windows.
+  const fakeDirs = [path.join(root, 'files', 'fake'), path.join(root, 'files/fake')]
+  let srcFake: string | null = null
+  for (const d of fakeDirs) {
+    try {
+      if (fs.existsSync(d)) {
+        srcFake = d
+        break
+      }
+    } catch {
+      /* next */
+    }
+  }
+  if (!srcFake) srcFake = findDirRecursive(root, 'fake', 4)
+  if (srcFake && fs.existsSync(srcFake)) {
+    let destFiles: string[] = []
+    try {
+      destFiles = fs.readdirSync(dataBin).filter((f) => f.toLowerCase().endsWith('.bin'))
+    } catch {
+      destFiles = []
+    }
+    for (const f of destFiles) {
+      if (/^ACTIVE_/i.test(f)) continue
+      const src = path.join(srcFake, f)
+      if (!fs.existsSync(src)) continue
+      if (!filesEqual(src, dest)) {
+        try {
+          fs.copyFileSync(src, path.join(dataBin, f))
+          filesUpdated.push(`bin/${f}`)
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+  }
+  fs.writeFileSync(path.join(dataBin, ENGINE_VERSION_FILE), `${cleanTag}\n`, 'utf8')
+  onProgress?.({ percent: 100, transferred: 0, total: null })
+  say(`Engine updated to ${cleanTag}: ${filesUpdated.length} files.`)
+  return { tag: cleanTag, filesUpdated, backupDir }
+}
+
+function findFileRecursive(dir: string, name: string, maxDepth: number): string | null {
+  if (maxDepth < 0) return null
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name)
+    if (e.isFile() && e.name === name) return p
+  }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === '.git') continue
+    const hit = findFileRecursive(path.join(dir, e.name), name, maxDepth - 1)
+    if (hit) return hit
+  }
+  return null
+}
+
+function findDirRecursive(dir: string, name: string, maxDepth: number): string | null {
+  if (maxDepth < 0) return null
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const e of entries) {
+    if (e.isDirectory() && e.name === name) return path.join(dir, e.name)
+  }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === '.git') continue
+    const hit = findDirRecursive(path.join(dir, e.name), name, maxDepth - 1)
+    if (hit) return hit
+  }
+  return null
 }
 
 /** Local .bin fake names available in bin/ (excluding ACTIVE_*). */

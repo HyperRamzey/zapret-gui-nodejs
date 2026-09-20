@@ -1338,9 +1338,25 @@ function readAdminBannerMinimized(): boolean {
 }
 
 function AdminBanner(): React.JSX.Element | null {
-  const { status, t, setError } = useUi()
+  const { status, t, setError, refreshStatus } = useUi()
   const [pending, setPending] = useState(false)
+  const [platform, setPlatform] = useState<'win32' | 'linux' | 'other'>('win32')
   const [minimized, setMinimized] = useState<boolean>(() => readAdminBannerMinimized())
+
+  useEffect(() => {
+    let alive = true
+    window.zapret
+      .getPlatform()
+      .then((p) => {
+        if (alive) setPlatform(p)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const onLinux = platform === 'linux'
 
   function minimize(): void {
     setMinimized(true)
@@ -1362,10 +1378,21 @@ function AdminBanner(): React.JSX.Element | null {
 
   if (!status || status.isAdmin) return null
 
-  async function relaunch(): Promise<void> {
+  async function elevate(): Promise<void> {
     if (pending) return
     setPending(true)
     try {
+      if (onLinux) {
+        // Linux: no relaunch — ask for root via pkexec/sudo and HOLD it
+        // while the app keeps running as the user. Main also broadcasts
+        // `statusChanged`, but re-read status here at once: otherwise the
+        // banner (gated on the cached `status.isAdmin`) stays up and every
+        // next click looks like "asking for root again".
+        await window.zapret.ensureRoot()
+        await refreshStatus()
+        setPending(false)
+        return
+      }
       const ok = await window.zapret.relaunchAsAdmin()
       if (!ok) {
         // UAC denied / launch failed: main keeps running, re-enable button.
@@ -1418,12 +1445,12 @@ function AdminBanner(): React.JSX.Element | null {
               </svg>
             </span>
             <span className="min-w-0 flex-1 basis-48 font-medium text-amber-900 dark:text-amber-100">
-              {t('dashboard.adminMissing')}
+              {onLinux ? t('dashboard.rootMissing') : t('dashboard.adminMissing')}
             </span>
             <span className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => void relaunch()}
+                onClick={() => void elevate()}
                 disabled={pending}
                 className="inline-flex min-h-[32px] items-center gap-2 rounded-lg bg-amber-500 px-3.5 py-1.5 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/70 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -1435,7 +1462,7 @@ function AdminBanner(): React.JSX.Element | null {
                     <path d="m9 12 2 2 4-4" />
                   </StrokeIcon>
                 )}
-                {t('dashboard.relaunchAdmin')}
+                {onLinux ? t('dashboard.grantRoot') : t('dashboard.relaunchAdmin')}
               </button>
               <button
                 type="button"
@@ -1454,8 +1481,8 @@ function AdminBanner(): React.JSX.Element | null {
       <button
         type="button"
         onClick={expand}
-        title={t('dashboard.adminMissing')}
-        aria-label={t('dashboard.adminMissing')}
+        title={onLinux ? t('dashboard.rootMissing') : t('dashboard.adminMissing')}
+        aria-label={onLinux ? t('dashboard.rootMissing') : t('dashboard.adminMissing')}
         aria-expanded={!minimized}
         aria-hidden={!minimized}
         tabIndex={minimized ? undefined : -1}

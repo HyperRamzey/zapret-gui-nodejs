@@ -266,7 +266,8 @@
   'updates.loadReleases': 'Load version list',
   'updates.engineResult': 'Engine {tag}: {count} files updated. Backup: {dir}',
   'updates.engineReleasesFailed': 'Failed to load the releases list',
-  'updates.engineRestartHint': 'Restart the zapret service after updating.',
+  'updates.engineRestartHint': 'Restart the zapret service after updating.'
+,
   'updates.appTitle': 'Application',
   'updates.appCurrent': 'Current version',
   'updates.appRemote': 'Available version',
@@ -315,4 +316,13 @@
   'tgProxy.resetSettings': 'Reset settings',
   'tgProxy.resetConfirm': 'Reset TG proxy settings to defaults? (Secret and running state are kept.)',
   'tray.tgProxy': 'TG proxy',
+  'dashboard.root': 'Root privileges',
+  'dashboard.rootYes': 'root ✓',
+  'dashboard.rootNo': 'user',
+  'dashboard.rootMissing': 'No root privileges — most actions are unavailable. The app stays unprivileged; rights are held via the system prompt.',
+  'dashboard.grantRoot': 'Grant root privileges',
+  'diag.requiresRoot': 'Root privileges required (grant them on the dashboard)',
+  'tray.grantRoot': 'Grant root privileges',
+  'settings.autoLaunchLinux': 'Launch at login',
+  'settings.resetNoRoot': 'Settings and data were reset, but nftables/nfqws were not stopped — grant root privileges and reset again.',
 } as const

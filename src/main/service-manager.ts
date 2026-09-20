@@ -9,8 +9,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { runCmd, runPowershell } from './exec'
-import { getBinDir, getListsDir } from './paths'
-import { materializeArgs, quoteArg } from './strategy-parser'
+import { getBinDir, getBundledAssetsDir, getListsDir } from './paths'
+import { materializeArgs, quoteArg, extractListFileRefs, stubContentForListFile } from './strategy-parser'
 import { SERVICE_NAME, WINDIVERT_SERVICE, WINWS_EXE, CONFLICTING_SERVICES } from '../shared/constants'
 import type { GameFilterMode, IPSetMode, ServiceOwnership, ServiceState, StatusSnapshot, Strategy } from '../shared/types'
 import { translate, type Locale } from '../shared/i18n'
@@ -227,14 +227,88 @@ export async function getStatus(isAdmin: boolean): Promise<StatusSnapshot> {
   }
 }
 
+/** Default game-filter port range (mirrors `service.bat` 1.10.3). */
+export const GAME_FILTER_DEFAULT_RANGE = '1024-65535'
+/** Dummy port used for the inactive side (mirrors `service.bat`). */
+export const GAME_FILTER_OFF_PORTS = '12'
+
+/**
+ * Validate a game-filter port range (`1024-65535`, `80,443,8000-8100`).
+ * Port of `:validate_game_filter_range` / `:gf_validate_item` from
+ * `service.bat` (1.10.3): comma-separated items, each `N` or `N-M`,
+ * 1–65535, no leading zeros, start ≤ end. Returns the compacted range
+ * or `null` when invalid. Pure — covered by unit tests.
+ */
+export function validateGameFilterRange(input: string): string | null {
+  const compact = String(input ?? '').replace(/\s+/g, '')
+  if (compact === '') return null
+  for (const item of compact.split(',')) {
+    const m = item.match(/^([1-9][0-9]*)(?:-([1-9][0-9]*))?$/)
+    if (!m) return null
+    const start = m[1] as string
+    const end = (m[2] ?? m[1]) as string
+    if (start.length > 5 || end.length > 5) return null
+    const s = Number(start)
+    const e = Number(end)
+    if (s > 65535 || e > 65535 || s > e) return null
+  }
+  return compact
+}
+
+/** Stored game-filter state (ranges are kept even for the inactive side). */
+interface GameFilterFileState {
+  mode: GameFilterMode
+  tcpRange: string
+  udpRange: string
+}
+
+/**
+ * Read the `game_filter.enabled` flag file.
+ * Understands both the legacy single-token format (`all` / `tcp` / `udp`)
+ * and the `service.bat` 1.10.3 format (`mode=` + `tcp=` / `udp=` ranges).
+ * Unknown modes / invalid ranges fall back to upstream defaults.
+ * Pure file read — covered by unit tests.
+ */
+export function readGameFilterFile(dataDir: string): GameFilterFileState {
+  const state: GameFilterFileState = { mode: 'disabled', tcpRange: GAME_FILTER_DEFAULT_RANGE, udpRange: GAME_FILTER_DEFAULT_RANGE }
+  let content: string
+  try {
+    content = fs.readFileSync(path.join(dataDir, 'utils', 'game_filter.enabled'), 'utf8')
+  } catch {
+    return state
+  }
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (line === '') continue
+    const eq = line.indexOf('=')
+    const key = (eq === -1 ? line : line.slice(0, eq)).trim().toLowerCase()
+    const value = (eq === -1 ? '' : line.slice(eq + 1)).trim()
+    if (key === 'mode') {
+      const v = value.toLowerCase()
+      if (v === 'all' || v === 'tcp' || v === 'udp' || v === 'disabled') state.mode = v
+    } else if (key === 'tcp' && value !== '') {
+      const r = validateGameFilterRange(value)
+      if (r) state.tcpRange = r
+    } else if (key === 'udp' && value !== '') {
+      const r = validateGameFilterRange(value)
+      if (r) state.udpRange = r
+    } else if (key === 'all' && value === '') {
+      // Legacy bare-token format (also what pre-1.10.3 `service.bat` wrote).
+      state.mode = 'all'
+    } else if ((key === 'tcp' || key === 'udp') && value === '') {
+      state.mode = key
+    }
+  }
+  return state
+}
+
 /** Resolve current game-filter TCP/UDP port specs from the flag file. */
 export function resolveGameFilterPorts(dataDir: string): { tcp: string; udp: string; mode: GameFilterMode } {
-  const flag = path.join(dataDir, 'utils', 'game_filter.enabled')
-  if (!fs.existsSync(flag)) return { tcp: '12', udp: '12', mode: 'disabled' }
-  const raw = fs.readFileSync(flag, 'utf8').trim().toLowerCase().split(/\s+/)[0] ?? ''
-  if (raw === 'all') return { tcp: '1024-65535', udp: '1024-65535', mode: 'all' }
-  if (raw === 'tcp') return { tcp: '1024-65535', udp: '12', mode: 'tcp' }
-  return { tcp: '12', udp: '1024-65535', mode: 'udp' }
+  const { mode, tcpRange, udpRange } = readGameFilterFile(dataDir)
+  if (mode === 'all') return { tcp: tcpRange, udp: udpRange, mode }
+  if (mode === 'tcp') return { tcp: tcpRange, udp: GAME_FILTER_OFF_PORTS, mode }
+  if (mode === 'udp') return { tcp: GAME_FILTER_OFF_PORTS, udp: udpRange, mode }
+  return { tcp: GAME_FILTER_OFF_PORTS, udp: GAME_FILTER_OFF_PORTS, mode: 'disabled' }
 }
 
 export function getGameFilterMode(dataDir: string): GameFilterMode {
@@ -247,8 +321,77 @@ export function setGameFilterMode(dataDir: string, mode: GameFilterMode): void {
   if (mode === 'disabled') {
     if (fs.existsSync(flag)) fs.rmSync(flag, { force: true })
   } else {
-    fs.writeFileSync(flag, mode === 'all' ? 'all' : mode, 'utf8')
+    // Preserve custom ranges (e.g. set via `service.bat` 1.10.3 menu),
+    // write the new `mode=`/`tcp=`/`udp=` format it understands.
+    const { tcpRange, udpRange } = readGameFilterFile(dataDir)
+    fs.writeFileSync(flag, `mode=${mode}\ntcp=${tcpRange}\nudp=${udpRange}\n`, 'utf8')
   }
+}
+
+/**
+ * Pre-flight for engine launches (both platforms): every `--hostlist*=` /
+ * `--ipset*=` file referenced by the materialized args must exist — the
+ * engine exits nonzero on a missing ipset file (`failed to register ipset`)
+ * while the UI only showed the truncated startup banner, hiding the cause.
+ *
+ * Missing files inside `listsDir` are healed automatically: stock lists are
+ * restored from `bundled-assets/lists`, anything else gets a safe stub
+ * (same contents as first-run seeding). A missing reference OUTSIDE
+ * `listsDir` is a broken strategy/import — that throws a clear error
+ * instead of writing somewhere unexpected.
+ * @returns base names of healed files (for logging)
+ */
+export function ensureListFilesExist(
+  listsDir: string,
+  args: string[],
+  onLog?: (text: string) => void
+): string[] {
+  const healed: string[] = []
+  const listsRoot = path.resolve(listsDir)
+  let bundledLists = ''
+  try {
+    bundledLists = path.join(getBundledAssetsDir(), 'lists')
+  } catch {
+    bundledLists = ''
+  }
+  for (const ref of extractListFileRefs(args)) {
+    const resolved = path.isAbsolute(ref) ? path.normalize(ref) : path.join(listsRoot, ref)
+    let stat: fs.Stats | null = null
+    try {
+      stat = fs.statSync(resolved)
+    } catch {
+      stat = null
+    }
+    if (stat?.isFile()) continue
+    if (stat?.isDirectory()) {
+      throw new Error(`Strategy references a directory instead of a list file: ${ref.slice(0, 200)}`)
+    }
+    const inside = resolved === listsRoot || resolved.startsWith(listsRoot + path.sep)
+    if (!inside) {
+      throw new Error(`Strategy references a missing list file outside the lists folder: ${ref.slice(0, 200)}`)
+    }
+    const base = path.basename(resolved)
+    let restored = false
+    if (bundledLists !== '') {
+      const src = path.join(bundledLists, base)
+      try {
+        if (fs.statSync(src).isFile()) {
+          fs.mkdirSync(path.dirname(resolved), { recursive: true })
+          fs.copyFileSync(src, resolved)
+          restored = true
+        }
+      } catch {
+        /* fall through to stub */
+      }
+    }
+    if (!restored) {
+      fs.mkdirSync(path.dirname(resolved), { recursive: true })
+      fs.writeFileSync(resolved, stubContentForListFile(base), 'utf8')
+    }
+    healed.push(base)
+    onLog?.(restored ? `Restored missing list file from bundled assets: ${base}` : `Created missing list file: ${base}`)
+  }
+  return healed
 }
 
 /** Derive IPSet mode from `lists/ipset-all.txt` (mirrors `:ipset_switch_status`). */

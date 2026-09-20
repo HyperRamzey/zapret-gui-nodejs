@@ -34,6 +34,35 @@ nsis:
   shortcutName: Zapret GUI
   # NSIS installer itself requests elevation; the app also re-asks via UAC on demand.
   perMachine: false
+linux:
+  icon: build/app-icon.png
+  category: Network
+  description: Desktop GUI for zapret DPI bypass (nfqws + nftables) — Discord / YouTube / Telegram
+  maintainer: avencores
+  vendor: avencores
+  synopsis: Zapret DPI bypass manager (nfqws + nftables)
+  syncDesktopName: true
+  # Only native distro packages: .deb for apt-based distros, .rpm for dnf-based.
+  # No AppImage / snap / flatpak targets.
+  target:
+    - deb
+    - rpm
+deb:
+  packageName: zapret-gui
+  artifactName: Zapret-GUI-${version}.${ext}
+  depends:
+    - nftables
+    - iproute2
+    - procps
+    - polkit-1 | policykit-1
+rpm:
+  packageName: zapret-gui
+  artifactName: Zapret-GUI-${version}.${ext}
+  depends:
+    - nftables
+    - iproute
+    - procps-ng
+    - polkit
 publish:
   provider: github
   owner: AvenCores

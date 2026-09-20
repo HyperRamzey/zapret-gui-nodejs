@@ -8,6 +8,7 @@ import type {
   AppSettings,
   AppUpdateInfo,
   AppUpdateState,
+  AppPlatform,
   BypassCheckResult,
   BypassTargetId,
   ConfigTesterEvent,
@@ -38,6 +39,11 @@ export interface TestOutput {
 
 const api = {
   getStatus: (): Promise<StatusSnapshot> => ipcRenderer.invoke(IPC.getStatus),
+  getPlatform: (): Promise<AppPlatform> => ipcRenderer.invoke(IPC.getPlatform),
+  ensureRoot: (): Promise<boolean> => ipcRenderer.invoke(IPC.ensureRoot),
+  listInterfaces: (): Promise<string[]> => ipcRenderer.invoke(IPC.listInterfaces),
+  getInterface: (): Promise<string> => ipcRenderer.invoke(IPC.getInterface),
+  setInterface: (iface: string): Promise<string> => ipcRenderer.invoke(IPC.setInterface, iface),
   listStrategies: (): Promise<Strategy[]> => ipcRenderer.invoke(IPC.listStrategies),
   installStrategy: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.installStrategy, id),
   removeServices: (): Promise<boolean> => ipcRenderer.invoke(IPC.removeServices),

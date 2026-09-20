@@ -168,6 +168,7 @@ function ConfigTesterCard(): React.JSX.Element {
     setError,
     status,
     strategies,
+    platform,
     refreshStatus,
     refreshSettings,
     configMode: mode,
@@ -318,7 +319,7 @@ function ConfigTesterCard(): React.JSX.Element {
 
   return (
     <Card title={t('diag.configTests')}>
-      {!isAdmin ? <p className="mb-2 text-xs font-medium text-red-600 dark:text-red-400">⚠ {t('diag.requiresAdmin')}</p> : null}
+      {!isAdmin ? <p className="mb-2 text-xs font-medium text-red-600 dark:text-red-400">⚠ {platform === 'linux' ? t('diag.requiresRoot') : t('diag.requiresAdmin')}</p> : null}
       {serviceConflict ? (
         <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">⚠ {t('diag.removeServiceFirst')}</p>
       ) : null}

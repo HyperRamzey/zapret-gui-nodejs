@@ -24,7 +24,8 @@ import {
   setAutoUpdateCheck,
   removeConflictingServices,
   clearDiscordCache,
-  deleteImportedStrategy
+  deleteImportedStrategy,
+  ensureListFilesExist
 } from './service-manager'
 import { parseBatContent, materializeArgsForSpawn, quoteArg } from './strategy-parser'
 import { resolveGameFilterPorts } from './service-manager'
@@ -53,6 +54,22 @@ import { translate } from '../shared/i18n'
 import { clearBufferedLogs, getBufferedLogs, info, warn, err } from './logger'
 import { isAdmin, relaunchAppAsAdmin, spawnLong, killPidTree } from './exec'
 import { WINWS_EXE } from '../shared/constants'
+import { isLinux } from './platform'
+import { hasRootPrivilege, ensureRootPrivilege, runPrivileged, spawnPrivileged } from './linux-privilege'
+import {
+  getLinuxStatus,
+  installLinuxStrategy,
+  removeLinuxServices,
+  startLinuxService,
+  stopLinuxService,
+  listNetworkInterfaces,
+  getLinuxInterface,
+  setLinuxInterface,
+  stripWfArgs,
+  linuxDropUserArgs,
+  NFQWS_MATCH_PATTERN,
+  resolveNfqwsPath
+} from './linux-service'
 import { abortActiveChild, runConfigTests } from './config-tester'
 import { win, safeSend } from './window'
 import type { ConfigTestMode } from '../shared/types'
@@ -189,7 +206,34 @@ function validateFakeTlsDomain(value: unknown): string {
 }
 
 export function registerIpcHandlers(): void {
-  ipcMain.handle(IPC.getStatus, async () => getStatus(await isAdmin()))
+  ipcMain.handle(IPC.getStatus, async () => {
+    if (isLinux()) {
+      const { getBinDir } = await import('./paths')
+      return getLinuxStatus(await hasRootPrivilege(), getDataDir(), getBinDir())
+    }
+    return getStatus(await isAdmin())
+  })
+
+  ipcMain.handle(IPC.getPlatform, async () => (isLinux() ? 'linux' : process.platform === 'win32' ? 'win32' : 'other'))
+
+  ipcMain.handle(IPC.ensureRoot, async () => {
+    if (!isLinux()) throw new Error('Root request is Linux-only (Windows uses relaunch as administrator)')
+    await ensureRootPrivilege()
+    sendLog('app', 'info', 'Root privileges granted and held (app still runs as user).')
+    // The renderer caches `status.isAdmin` — without this it keeps showing
+    // the "grant root" banner forever even though auth succeeded (App.tsx
+    // re-reads status/strategies/settings on this event).
+    safeSend(IPC.statusChanged)
+    return true
+  })
+
+  ipcMain.handle(IPC.listInterfaces, async () => listNetworkInterfaces())
+  ipcMain.handle(IPC.getInterface, async () => getLinuxInterface(getDataDir()))
+  ipcMain.handle(IPC.setInterface, async (_e, iface: string) => {
+    const clean = setLinuxInterface(getDataDir(), String(iface ?? 'any'))
+    sendLog('app', 'info', `Network interface → ${clean}. Restart zapret to apply.`)
+    return clean
+  })
 
   ipcMain.handle(IPC.listStrategies, async () => listStrategies())
 
@@ -197,25 +241,43 @@ export function registerIpcHandlers(): void {
     const s = findStrategy(strategyId)
     if (!s) throw new Error(`Strategy not found: ${strategyId}`)
     sendLog('app', 'info', `Installing strategy "${s.name}"...`)
-    await installStrategy(s, getDataDir(), (t) => sendLog('app', 'info', t))
+    if (isLinux()) {
+      await installLinuxStrategy(s, { dataDir: getDataDir(), binDir: getBinDir(), listsDir: getListsDir() }, (t) =>
+        sendLog('app', 'info', t)
+      )
+    } else {
+      await installStrategy(s, getDataDir(), (t) => sendLog('app', 'info', t))
+    }
     saveSettings({ activeStrategyId: s.id })
     return true
   })
 
   ipcMain.handle(IPC.removeServices, async () => {
     sendLog('app', 'info', 'Removing services...')
-    await removeServices((t) => sendLog('app', 'info', t))
+    if (isLinux()) {
+      await removeLinuxServices(getDataDir(), (t) => sendLog('app', 'info', t))
+    } else {
+      await removeServices((t) => sendLog('app', 'info', t))
+    }
     return true
   })
 
   ipcMain.handle(IPC.startService, async () => {
-    await startService()
+    if (isLinux()) {
+      await startLinuxService(getDataDir(), (t) => sendLog('app', 'info', t))
+    } else {
+      await startService()
+    }
     sendLog('app', 'info', 'Service started.')
     return true
   })
 
   ipcMain.handle(IPC.stopService, async () => {
-    await stopService()
+    if (isLinux()) {
+      await stopLinuxService(getDataDir(), (t) => sendLog('app', 'info', t))
+    } else {
+      await stopService()
+    }
     sendLog('app', 'info', 'Service stopped.')
     return true
   })
@@ -255,17 +317,49 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.testStrategy, async (_e, strategyId: string) => {
-    // Foreground test and config-tester share WinDivert — never run both.
+    // Foreground test and config-tester share the packet path — never run both.
     if (configTesterAbort) throw new Error('Config tests are running — stop them first')
     stopTestInternal()
     const s = findStrategy(strategyId)
     if (!s) throw new Error(`Strategy not found: ${strategyId}`)
     const { tcp, udp } = resolveGameFilterPorts(getDataDir())
-    // Direct spawn (no shell): strip the .bat-era quotes, otherwise winws
+    // Direct spawn (no shell): strip the .bat-era quotes, otherwise the engine
     // receives literal `"` inside argv and fails to open list/bin files.
-    const args = materializeArgsForSpawn(s.args, { binDir: getBinDir(), listsDir: getListsDir(), gameTcp: tcp, gameUdp: udp })
+    const rawArgs = materializeArgsForSpawn(s.args, { binDir: getBinDir(), listsDir: getListsDir(), gameTcp: tcp, gameUdp: udp })
+    if (isLinux()) {
+      if (!(await hasRootPrivilege())) {
+        throw new Error('Root privileges are required for the foreground test. Grant root access first.')
+      }
+      // Linux nfqws rejects Windows-only --wf-* and runs in foreground
+      // (no --daemon) so output streams back to the UI. --user drops root
+      // to the desktop user (700 $HOME is unreadable for nobody).
+      const args = [...stripWfArgs(rawArgs).map((a) => a.replace(/"/g, '')), ...linuxDropUserArgs()]
+      const exe = resolveNfqwsPath(getDataDir())
+      if (path.isAbsolute(exe) && !fs.existsSync(exe)) {
+        throw new Error(`nfqws not found in ${getBinDir()} — update the DPI engine first`)
+      }
+      ensureListFilesExist(getListsDir(), args, (t) => sendLog('winws', 'info', t))
+      sendLog('winws', 'info', `Starting foreground test: nfqws ${args.map(quoteArg).join(' ')}`)
+      const proc = spawnPrivileged(exe, args, getBinDir())
+      testProc = proc
+      proc.stdout?.on('data', (d: Buffer) => safeSend(IPC.onTestOutput, { stream: 'stdout', text: String(d) }))
+      proc.stderr?.on('data', (d: Buffer) => safeSend(IPC.onTestOutput, { stream: 'stderr', text: String(d) }))
+      proc.on('error', (e) => {
+        sendLog('winws', 'error', `Test process failed to start: ${String(e).slice(0, 300)}`)
+        if (testProc === proc) testProc = null
+        safeSend(IPC.onTestOutput, { stream: 'exit', text: '1' })
+      })
+      proc.on('exit', (code) => {
+        sendLog('winws', 'info', `Test process exited with code ${code}`)
+        if (testProc === proc) testProc = null
+        safeSend(IPC.onTestOutput, { stream: 'exit', text: String(code ?? '') })
+      })
+      return true
+    }
+    const args = rawArgs
     const exe = path.join(getBinDir(), WINWS_EXE)
     if (!fs.existsSync(exe)) throw new Error(`winws.exe not found in ${getBinDir()}`)
+    ensureListFilesExist(getListsDir(), args, (t) => sendLog('winws', 'info', t))
     sendLog('winws', 'info', `Starting foreground test: winws.exe ${args.map(quoteArg).join(' ')}`)
     const proc = spawnLong(exe, args, getBinDir())
     testProc = proc
@@ -289,7 +383,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.stopTest, async () => {
-    stopTestInternal()
+    await stopTestInternalAsync()
     return true
   })
 
@@ -353,6 +447,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.updateHosts, async () => checkHosts())
   ipcMain.handle(IPC.applyHosts, async (_e, remoteContent: string) => {
     if (!(await isAdmin())) {
+      if (isLinux()) {
+        throw new Error('Root privileges are required to update /etc/hosts. Grant root access and retry.')
+      }
       throw new Error('Administrator rights are required to update the system hosts file. Click "Restart as administrator" and retry.')
     }
     await applyHosts(remoteContent)
@@ -364,6 +461,9 @@ export function registerIpcHandlers(): void {
     IPC.removeHosts,
     async (_e, payload?: { firstLine?: string; lastLine?: string; remoteContent?: string }) => {
       if (!(await isAdmin())) {
+        if (isLinux()) {
+          throw new Error('Root privileges are required to update /etc/hosts. Grant root access and retry.')
+        }
         throw new Error('Administrator rights are required to update the system hosts file. Click "Restart as administrator" and retry.')
       }
       const p = (payload ?? {}) as { firstLine?: string; lastLine?: string; remoteContent?: string }
@@ -422,11 +522,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.checkBypass, async (_e, id: BypassTargetId) => checkBypassTarget(id))
 
   ipcMain.handle(IPC.clearDiscordCache, async () => {
+    if (isLinux()) {
+      const { clearDiscordCacheLinux } = await import('./linux-maintenance')
+      return clearDiscordCacheLinux((t) => sendLog('app', 'info', t), loadSettings().locale)
+    }
     const lines = await clearDiscordCache(process.env.APPDATA ?? '', (t) => sendLog('app', 'info', t), loadSettings().locale)
     return lines
   })
 
   ipcMain.handle(IPC.removeConflicts, async () => {
+    if (isLinux()) return []
     const removed = await removeConflictingServices((t) => sendLog('app', 'info', t), loadSettings().locale)
     return removed
   })
@@ -642,6 +747,10 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.relaunchAsAdmin, async () => {
+    if (isLinux()) {
+      // Linux never relaunches Electron as root — use ensureRoot instead.
+      throw new Error('Not supported on Linux: use Grant root access — the app never runs as root.')
+    }
     const exe = process.execPath
     // If the TG proxy listener is up, stop it BEFORE Start-Process so the
     // elevated copy can bind the same port. Otherwise the new instance hits
@@ -755,7 +864,24 @@ function stopTestInternal(): void {
     if (typeof proc.pid === 'number' && proc.pid > 0) {
       void killPidTree(proc.pid)
     }
+    if (isLinux() && typeof proc.pid === 'number' && proc.pid > 0) {
+      // Privileged nfqws test runs under pkexec/sudo: also ask root to reap it.
+      void runPrivileged('kill', ['-KILL', String(proc.pid)], 8000).catch(() => undefined)
+      void runPrivileged('pkill', ['-f', NFQWS_MATCH_PATTERN], 8000).catch(() => undefined)
+    }
     sendLog('winws', 'info', 'Test process stopped.')
+  }
+}
+
+/** Async variant used by IPC stop (waits for the privileged reap on Linux). */
+async function stopTestInternalAsync(): Promise<void> {
+  stopTestInternal()
+  if (isLinux()) {
+    try {
+      await runPrivileged('pkill', ['-f', NFQWS_MATCH_PATTERN], 8000)
+    } catch {
+      /* nothing running */
+    }
   }
 }
 

@@ -477,7 +477,7 @@ function HostsBlock(): React.JSX.Element {
 }
 
 export default function Dashboard(): React.JSX.Element {
-  const { t, status, refreshStatus, refreshSettings, busy, setError, settings, setPage, strategies } = useUi()
+  const { t, status, refreshStatus, refreshSettings, busy, setError, settings, setPage, strategies, platform } = useUi()
   const [foreignExpanded, setForeignExpanded] = useState(false)
   const [acting, setActing] = useState<null | 'start' | 'stop' | 'restart' | 'remove'>(null)
 
@@ -596,17 +596,26 @@ export default function Dashboard(): React.JSX.Element {
             {serviceLabel}
           </Badge>
         </Row>
-        <Row label={t('dashboard.windivert')}>
+        <Row label={platform === 'linux' ? 'nftables' : t('dashboard.windivert')}>
           <Badge tone={stateTone(status.windivert)}>
             <Dot tone={stateTone(status.windivert)} pulse={status.windivert === 'RUNNING'} />
             {status.windivert === 'RUNNING' ? t('status.running') : t(`status.${stateKey(status.windivert)}`)}
           </Badge>
         </Row>
-        <Row label={t('dashboard.winws')}>
-          <Badge tone={status.winwsRunning ? 'green' : 'red'}>
-            <Dot tone={status.winwsRunning ? 'green' : 'red'} pulse={status.winwsRunning} />
-            {status.winwsRunning ? t('status.running') : t('status.stopped')}
-          </Badge>
+        <Row label={platform === 'linux' ? 'nfqws' : t('dashboard.winws')}>
+          {platform === 'linux' && !status.isAdmin ? (
+            // Unprivileged pgrep hits are unverifiable (stale/foreign daemons)
+            // — never paint them green. Grant root to verify.
+            <Badge tone="gray">
+              <Dot tone="gray" pulse={false} />
+              {t('status.unknown')}
+            </Badge>
+          ) : (
+            <Badge tone={status.winwsRunning ? 'green' : 'red'}>
+              <Dot tone={status.winwsRunning ? 'green' : 'red'} pulse={status.winwsRunning} />
+              {status.winwsRunning ? t('status.running') : t('status.stopped')}
+            </Badge>
+          )}
         </Row>
         <Row label={t('dashboard.strategy')}>
           <span className="text-sm text-slate-900 dark:text-slate-100">
@@ -621,8 +630,10 @@ export default function Dashboard(): React.JSX.Element {
             </span>
           </Row>
         ) : null}
-        <Row label={t('dashboard.admin')}>
-          <Badge tone={status.isAdmin ? 'green' : 'yellow'}>{status.isAdmin ? t('dashboard.adminYes') : t('dashboard.adminNo')}</Badge>
+        <Row label={platform === 'linux' ? t('dashboard.root') : t('dashboard.admin')}>
+          <Badge tone={status.isAdmin ? 'green' : 'yellow'}>
+            {status.isAdmin ? (platform === 'linux' ? t('dashboard.rootYes') : t('dashboard.adminYes')) : platform === 'linux' ? t('dashboard.rootNo') : t('dashboard.adminNo')}
+          </Badge>
         </Row>
 
         <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-3 dark:border-slate-700/60">

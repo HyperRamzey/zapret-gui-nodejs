@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import { getAppLogPath, getTgProxyLogPath, getDataDir, ensureDataDirSeeded } from './paths'
 import { resetSettings } from './settings'
 import { removeServices } from './service-manager'
+import { isLinux } from './platform'
 import type { AppSettings } from '../shared/types'
 
 export interface ResetAppDataResult {
@@ -39,8 +40,13 @@ export async function resetAppData(onLog?: (text: string) => void): Promise<Rese
 
   let servicesRemoved = true
   try {
-    say('Removing zapret services...')
-    await removeServices((t) => say(t))
+    say(isLinux() ? 'Removing Linux zapret state (nfqws + nftables)...' : 'Removing zapret services...')
+    if (isLinux()) {
+      const { removeLinuxServices } = await import('./linux-service')
+      await removeLinuxServices(getDataDir(), (t) => say(t))
+    } else {
+      await removeServices((t) => say(t))
+    }
   } catch (e) {
     // No admin / locked SCM: files below still reset, the stale service (if
     // any) is reported to the user via the return flag.

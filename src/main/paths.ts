@@ -9,6 +9,8 @@
 import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { isLinux } from './platform'
+import { WINDOWS_ONLY_BIN_FILES, LINUX_ONLY_BIN_FILES } from '../shared/constants'
 
 /** Read-only directory shipped inside the installer. */
 export function getBundledAssetsDir(): string {
@@ -52,12 +54,13 @@ export function getTgProxyLogPath(): string {
   return path.join(app.getPath('appData'), 'zapret-gui', 'tg-proxy.log')
 }
 
-function copyDirRecursive(src: string, dest: string): void {
+function copyDirRecursive(src: string, dest: string, skip?: (name: string) => boolean): void {
   fs.mkdirSync(dest, { recursive: true })
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (skip?.(entry.name)) continue
     const s = path.join(src, entry.name)
     const d = path.join(dest, entry.name)
-    if (entry.isDirectory()) copyDirRecursive(s, d)
+    if (entry.isDirectory()) copyDirRecursive(s, d, skip)
     else if (entry.isFile() && !fs.existsSync(d)) fs.copyFileSync(s, d)
   }
 }
@@ -81,10 +84,27 @@ export function ensureDataDirSeeded(): void {
   const keepFlagOff = fs.existsSync(data) && !fs.existsSync(flagPath)
   fs.mkdirSync(data, { recursive: true })
   if (fs.existsSync(bundled)) {
+    // Platform-specific engine binaries: Linux never gets winws.exe/WinDivert
+    // (~3.5 MB of dead weight), Windows never gets nfqws. Shared .bin fakes
+    // and lists seed on both.
+    const linux = isLinux()
+    const skipBin = (name: string): boolean => {
+      const lower = name.toLowerCase()
+      if (linux) return (WINDOWS_ONLY_BIN_FILES as readonly string[]).some((n) => n.toLowerCase() === lower)
+      return (LINUX_ONLY_BIN_FILES as readonly string[]).some((n) => n.toLowerCase() === lower)
+    }
     for (const sub of ['bin', 'lists', 'utils', 'strategies']) {
       const src = path.join(bundled, sub)
-      if (fs.existsSync(src)) copyDirRecursive(src, path.join(data, sub))
+      if (fs.existsSync(src)) copyDirRecursive(src, path.join(data, sub), sub === 'bin' ? skipBin : undefined)
     }
+  }
+  // Seeded nfqws must stay executable (zip/tar transports and copyFileSync
+  // across filesystems can drop +x).
+  try {
+    const nfqws = path.join(data, 'bin', 'nfqws')
+    if (fs.existsSync(nfqws)) fs.chmodSync(nfqws, 0o755)
+  } catch {
+    /* best-effort */
   }
   if (keepFlagOff) fs.rmSync(flagPath, { force: true })
   const lists = getListsDir()
