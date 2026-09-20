@@ -6,7 +6,8 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { runCmd, runPowershell } from './exec'
+import { execFile } from 'node:child_process'
+import { runCmd, runPowershell, runSh } from './exec'
 import { getBinDir } from './paths'
 import { SERVICE_NAME } from '../shared/constants'
 import { CONFLICTING_SERVICES } from '../shared/constants'
@@ -14,6 +15,7 @@ import { detectServiceOwnership, getWinwsProcessPath } from './service-manager'
 import type { DiagnosticCheck } from '../shared/types'
 import type { I18nKey } from '../shared/i18n'
 import { queryServiceState as scQueryState } from './service-manager'
+import { isLinux } from './platform'
 
 interface Ctx {
   installDir: string
@@ -302,6 +304,7 @@ function withCheckTimeout(task: Promise<DiagnosticCheck>, fallback: { id: string
 
 /** Run the full diagnostics suite. */
 export async function runDiagnostics(installDir: string, appData: string): Promise<DiagnosticCheck[]> {
+  if (isLinux()) return runLinuxDiagnostics(installDir)
   const ctx: Ctx = { installDir, appData }
   // Checks are independent — run them concurrently (Promise.all preserves
   // order) instead of sequentially, where ~17 × up-to-30s shell calls could
@@ -339,5 +342,140 @@ export async function runDiagnostics(installDir: string, appData: string): Promi
     withCheckTimeout(checkWinDivertStuck(), { id: 'windivertStuck', labelKey: 'diag.windivertStuck' }),
     withCheckTimeout(checkForeign(), { id: 'foreign', labelKey: 'diag.foreign' }),
     withCheckTimeout(checkConflicts(), { id: 'conflicts', labelKey: 'diag.conflicts' })
+  ])
+}
+
+// ---------------------------------------------------------------------------
+// Linux diagnostics (nftables-only backend)
+// ---------------------------------------------------------------------------
+
+function shCapture(file: string, args: string[], timeoutMs = 10000): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  return new Promise((resolve) => {
+    execFile(file, args, { timeout: timeoutMs }, (error, stdout, stderr) => {
+      resolve({
+        stdout: String(stdout ?? ''),
+        stderr: String(stderr ?? ''),
+        code: error && 'code' in error ? ((error as { code?: number | null }).code ?? 1) : 0
+      })
+    })
+  })
+}
+
+async function checkLinuxRoot(): Promise<DiagnosticCheck> {
+  const base = { id: 'root', labelKey: 'diag.bfe' } as const
+  try {
+    const { hasRootPrivilege, getElevator } = await import('./linux-privilege')
+    const ok = await hasRootPrivilege()
+    const elevator = getElevator()
+    return {
+      ...base,
+      level: ok ? 'ok' : 'warn',
+      detail: ok ? `root held via ${elevator} (app runs as user)` : 'root not granted — grant root access to manage nftables/nfqws',
+      detailKey: ok ? 'diag.detail.running' : 'diag.detail.bfeFail'
+    }
+  } catch {
+    return { ...base, level: 'warn', detail: 'could not probe privilege helper', detailKey: 'diag.detail.timeout' }
+  }
+}
+
+async function checkLinuxNft(): Promise<DiagnosticCheck> {
+  const base = { id: 'nft', labelKey: 'diag.windivertStuck' } as const
+  const r = await shCapture('which', ['nft'], 8000)
+  if (r.code !== 0 || r.stdout.trim() === '') {
+    return {
+      ...base,
+      level: 'fail',
+      detail: 'nft not found — install nftables (apt install nftables / dnf install nftables)',
+      detailKey: 'diag.detail.sysFail'
+    }
+  }
+  try {
+    const { runPrivileged } = await import('./linux-privilege')
+    // Non-interactive: diagnostics must report, never pop an auth dialog.
+    const t = await runPrivileged('nft', ['list', 'tables'], 10000, { allowPrompt: false })
+    const active = t.stdout.split('\n').some((l) => l.trim() === 'table inet zapret')
+    return {
+      ...base,
+      level: 'ok',
+      detail: active ? 'nft available, zapret table active' : 'nft available, zapret table not installed',
+      detailKey: active ? 'diag.detail.noStale' : 'diag.detail.notDetected'
+    }
+  } catch {
+    return { ...base, level: 'warn', detail: 'nft found but needs root to inspect tables', detailKey: 'diag.detail.timeout' }
+  }
+}
+
+function checkLinuxNfqws(): DiagnosticCheck {
+  const base = { id: 'nfqws', labelKey: 'diag.sysfile' } as const
+  let present = false
+  try {
+    const bin = getBinDir()
+    present =
+      fs.existsSync(path.join(bin, 'nfqws')) ||
+      fs.existsSync('/usr/bin/nfqws') ||
+      fs.existsSync('/usr/local/bin/nfqws') ||
+      fs.existsSync('/opt/zapret/nfqws')
+  } catch {
+    present = false
+  }
+  return {
+    ...base,
+    level: present ? 'ok' : 'fail',
+    detail: present ? 'nfqws present' : 'nfqws NOT found — update the DPI engine (Updates tab)',
+    detailKey: present ? 'diag.detail.sysOk' : 'diag.detail.sysFail'
+  }
+}
+
+async function checkLinuxNfqwsRunning(): Promise<DiagnosticCheck> {
+  const base = { id: 'nfqwsRunning', labelKey: 'diag.foreign' } as const
+  const { NFQWS_MATCH_PATTERN } = await import('./linux-service')
+  const r = await shCapture('pgrep', ['-af', NFQWS_MATCH_PATTERN], 8000)
+  const running = r.code === 0 && r.stdout.trim() !== ''
+  return {
+    ...base,
+    level: running ? 'ok' : 'warn',
+    detail: running ? r.stdout.trim().split('\n')[0]?.slice(0, 200) ?? 'running' : 'nfqws not running',
+    detailKey: running ? 'diag.detail.noForeign' : 'diag.detail.notDetected'
+  }
+}
+
+async function checkLinuxHosts(): Promise<DiagnosticCheck> {
+  const base = { id: 'hosts', labelKey: 'diag.hosts' } as const
+  try {
+    const content = fs.readFileSync('/etc/hosts', 'utf8').toLowerCase()
+    const hit = content.includes('youtube.com') || content.includes('youtu.be')
+    return {
+      ...base,
+      level: hit ? 'warn' : 'ok',
+      detail: hit ? 'hosts contains youtube entries — may break YouTube' : 'clean',
+      detailKey: hit ? 'diag.detail.hostsWarn' : 'diag.detail.clean'
+    }
+  } catch {
+    return { ...base, level: 'warn', detail: 'could not read /etc/hosts', detailKey: 'diag.detail.hostsReadFail' }
+  }
+}
+
+async function checkLinuxVpn(): Promise<DiagnosticCheck> {
+  const base = { id: 'vpn', labelKey: 'diag.vpn' } as const
+  const r = await shCapture('ip', ['link', 'show'], 8000)
+  const hits = (r.stdout.match(/^\d+: (tun\d+|wg\d+|ppp\d+|vpn[^:]*):/gm) ?? []).map((s) => s.trim())
+  return {
+    ...base,
+    level: hits.length > 0 ? 'warn' : 'ok',
+    detail: hits.length > 0 ? `VPN interfaces: ${hits.join(', ')} — disable VPNs` : 'none',
+    detailKey: hits.length > 0 ? 'diag.detail.vpnWarn' : 'diag.detail.none',
+    ...(hits.length > 0 ? { detailParams: { list: hits.join(', ') } } : {})
+  }
+}
+
+/** Linux suite: root/nft/nfqws/hosts/vpn. Reuses timeout wrapper. */
+export async function runLinuxDiagnostics(_installDir: string): Promise<DiagnosticCheck[]> {
+  return Promise.all([
+    withCheckTimeout(checkLinuxRoot(), { id: 'root', labelKey: 'diag.bfe' }),
+    withCheckTimeout(checkLinuxNft(), { id: 'nft', labelKey: 'diag.windivertStuck' }),
+    withCheckTimeout(Promise.resolve(checkLinuxNfqws()), { id: 'nfqws', labelKey: 'diag.sysfile' }),
+    withCheckTimeout(checkLinuxNfqwsRunning(), { id: 'nfqwsRunning', labelKey: 'diag.foreign' }),
+    withCheckTimeout(checkLinuxHosts(), { id: 'hosts', labelKey: 'diag.hosts' }),
+    withCheckTimeout(checkLinuxVpn(), { id: 'vpn', labelKey: 'diag.vpn' })
   ])
 }

@@ -6,7 +6,7 @@ import { app, BrowserWindow, shell, dialog } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
-import { ensureDataDirSeeded, getDataDir, getAppLogPath, getTgProxyLogPath, getBundledAssetsDir, getListsDir } from './paths'
+import { ensureDataDirSeeded, getDataDir, getAppLogPath, getTgProxyLogPath, getBundledAssetsDir, getListsDir, getBinDir } from './paths'
 import { initLogger, setLogsEnabled, isLogsEnabled, clearBufferedLogs, info, warn, err, onLog, getBufferedLogs } from './logger'
 import type { LogLine } from '../shared/types'
 import { setupAutoUpdater } from './app-updater'
@@ -24,6 +24,14 @@ import {
   setIPSetMode
 } from './service-manager'
 import { isAdmin, relaunchAppAsAdmin } from './exec'
+import { isLinux } from './platform'
+import { hasRootPrivilege, ensureRootPrivilege, isRootProcess, stopPrivilegeKeepAlive } from './linux-privilege'
+import {
+  getLinuxStatus,
+  startLinuxService,
+  stopLinuxService,
+  installLinuxStrategy
+} from './linux-service'
 import { TG_PROXY_RESTART_ARG, ADMIN_RELAUNCH_ARG } from '../shared/constants'
 import { IPC } from '../shared/types'
 import { translate } from '../shared/i18n'
@@ -33,6 +41,49 @@ import { getTgProxyStats, getTgProxyStatus, startTgProxy, stopTgProxy, tgStartOp
 
 let mainWindow: BrowserWindow | null = null
 let isQuitting = false
+
+/**
+ * Unified elevation probe: Windows = admin token, Linux = held root via the
+ * privilege helper (Electron itself is never root there).
+ */
+async function currentElevation(): Promise<boolean> {
+  try {
+    return isLinux() ? await hasRootPrivilege() : await isAdmin()
+  } catch {
+    return false
+  }
+}
+
+async function statusSnapshot(elevated: boolean) {
+  if (isLinux()) return getLinuxStatus(elevated, getDataDir(), getBinDir())
+  return getStatus(elevated)
+}
+
+async function startUnified(): Promise<void> {
+  if (isLinux()) await startLinuxService(getDataDir(), (t) => info('app', t))
+  else await startService()
+}
+
+async function stopUnified(): Promise<void> {
+  if (isLinux()) await stopLinuxService(getDataDir(), (t) => info('app', t))
+  else await stopService()
+}
+
+function appIconPath(): string {
+  const bundled = getBundledAssetsDir()
+  if (isLinux()) {
+    for (const name of ['icon.png', '../build/app-icon.png', 'icon.ico']) {
+      const p = name.startsWith('../') ? path.join(bundled, name) : path.join(bundled, name)
+      try {
+        if (fs.existsSync(p)) return p
+      } catch {
+        /* next */
+      }
+    }
+    return path.join(bundled, 'icon.ico')
+  }
+  return path.join(bundled, 'icon.ico')
+}
 // `onLog` subscription is global (not per-window): createWindow() runs on
 // every second-instance/activate, and a per-window subscribe would duplicate
 // log delivery N times.
@@ -88,6 +139,11 @@ function armLogForwarding(): void {
 }
 app.on('before-quit', () => {
   isQuitting = true
+  try {
+    stopPrivilegeKeepAlive()
+  } catch {
+    /* best-effort */
+  }
   try {
     // A foreground/config test spawns winws.exe directly (no service) —
     // without this it keeps running as an orphan after the app exits.
@@ -145,8 +201,8 @@ async function refreshTray(): Promise<void> {
       destroyTray()
       return
     }
-    const admin = await isAdmin()
-    const st = await getStatus(admin)
+    const admin = await currentElevation()
+    const st = await statusSnapshot(admin)
     const zs = toTrayStatus(st.zapret)
     let strategies: Array<{ id: string; name: string }> = []
     try {
@@ -199,7 +255,7 @@ async function refreshTray(): Promise<void> {
     }
     // Labels follow the app language (also refreshed by the 15s timer,
     // so a language switch applies to the tray shortly after).
-    setupTray(zs, getTrayLabels(settings.locale, zs), ctx, trayCallbacks())
+    setupTray(zs, getTrayLabels(settings.locale, zs, isLinux() ? 'linux' : 'win32'), ctx, trayCallbacks())
   } catch {
     /* tray refresh is best-effort */
   } finally {
@@ -268,17 +324,17 @@ async function serviceAction(kind: 'start' | 'stop' | 'restart'): Promise<void> 
   if (serviceBusy) return
   serviceBusy = true
   try {
-    const st = await getStatus(await isAdmin())
+    const st = await statusSnapshot(await currentElevation())
     if (st.ownership === 'foreign') {
       // A third-party service must not be touched — explain in the app.
       navigateTo('dashboard')
       return
     }
-    if (kind === 'start') await startService()
-    else if (kind === 'stop') await stopService()
+    if (kind === 'start') await startUnified()
+    else if (kind === 'stop') await stopUnified()
     else {
-      await stopService().catch(() => undefined)
-      await startService()
+      await stopUnified().catch(() => undefined)
+      await startUnified()
     }
     info('app', `Service ${kind} from tray: OK.`)
   } catch (e) {
@@ -299,7 +355,7 @@ async function applyStrategyFromTray(id: string): Promise<void> {
   if (serviceBusy) return
   serviceBusy = true
   try {
-    const st = await getStatus(await isAdmin())
+    const st = await statusSnapshot(await currentElevation())
     if (st.ownership === 'foreign') {
       // A third-party service must not be touched — explain in the app.
       navigateTo('strategies')
@@ -311,7 +367,13 @@ async function applyStrategyFromTray(id: string): Promise<void> {
       return
     }
     info('app', `Installing strategy "${s.name}" from tray...`)
-    await installStrategy(s, getDataDir(), (t) => info('app', t))
+    if (isLinux()) {
+      await installLinuxStrategy(s, { dataDir: getDataDir(), binDir: getBinDir(), listsDir: getListsDir() }, (t) =>
+        info('app', t)
+      )
+    } else {
+      await installStrategy(s, getDataDir(), (t) => info('app', t))
+    }
     saveSettings({ activeStrategyId: s.id })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -450,6 +512,22 @@ function trayCallbacks() {
     },
     onRelaunchAdmin: () => {
       void (async () => {
+        if (isLinux()) {
+          // No relaunch on Linux: ask for root via the privilege helper and
+          // hold it while the app keeps running as the user.
+          try {
+            await ensureRootPrivilege()
+            info('app', 'Root privileges granted and held (app still runs as user).')
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            err('app', `Root request failed: ${msg.slice(0, 300)}`)
+            dialog.showErrorBox('Zapret GUI', msg.slice(0, 500))
+          } finally {
+            notifyRenderer()
+            await refreshTray()
+          }
+          return
+        }
         // Same TG-proxy handover as the IPC handler: free the listen port
         // before the elevated copy starts, or it fails with EADDRINUSE.
         let tgHandover = false
@@ -541,7 +619,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     title: 'Zapret GUI',
-    icon: path.join(getBundledAssetsDir(), 'icon.ico'),
+    icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -615,7 +693,7 @@ async function firstRunCheck(): Promise<void> {
   const settings = loadSettings()
   if (settings.activeStrategyId) return
   try {
-    const st = await getStatus(await isAdmin())
+    const st = await statusSnapshot(await currentElevation())
     if (st.activeStrategy || st.zapret !== 'NOT_INSTALLED') return
   } catch {
     return
@@ -656,6 +734,16 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(() => {
+    // Linux guard: the app must NEVER run as root. Refuse early with a clear
+    // message instead of silently running an X/Electron session as uid 0.
+    if (isLinux() && isRootProcess()) {
+      dialog.showErrorBox(
+        'Zapret GUI',
+        'Do not run Zapret GUI as root. Start it as a normal user and grant root access in the app — privileges are held via pkexec/sudo while the app stays unprivileged.'
+      )
+      app.quit()
+      return
+    }
     electronApp.setAppUserModelId('com.zapret.gui')
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
@@ -715,6 +803,11 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on('window-all-closed', () => {
-  // Keep running in tray on Windows.
-  if (process.platform !== 'win32') app.quit()
+  // Keep running in tray when the tray icon is enabled (Windows + Linux).
+  try {
+    if (loadSettings().showTrayIcon && process.platform !== 'darwin') return
+  } catch {
+    /* fall through to default */
+  }
+  if (process.platform !== 'darwin') app.quit()
 })

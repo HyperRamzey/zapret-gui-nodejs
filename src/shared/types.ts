@@ -355,9 +355,17 @@ export type ConfigTesterEvent =
   | { kind: 'done'; cancelled: boolean; best: string | null; filePath: string | null; rows: ConfigTesterAnalyticsRow[] }
   | { kind: 'progress'; completed: number; total: number; current: string }
 
+/** Runtime platform reported by the main process. */
+export type AppPlatform = 'win32' | 'linux' | 'other'
+
 /** IPC channel names (kept in one place to avoid typos). */
 export const IPC = {
   getStatus: 'zapret:get-status',
+  getPlatform: 'zapret:get-platform',
+  ensureRoot: 'zapret:ensure-root',
+  listInterfaces: 'zapret:list-interfaces',
+  getInterface: 'zapret:get-interface',
+  setInterface: 'zapret:set-interface',
   installStrategy: 'zapret:install-strategy',
   removeServices: 'zapret:remove-services',
   startService: 'zapret:start-service',

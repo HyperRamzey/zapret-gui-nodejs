@@ -36,8 +36,13 @@ describe('getBundledZapretVersion', () => {
 })
 
 describe('getSystemHostsPath', () => {
-  it('points at the Windows system hosts file', () => {
-    expect(getSystemHostsPath().toLowerCase().replace(/\//g, '\\')).toContain('system32\\drivers\\etc\\hosts')
+  it('points at the system hosts file (per platform)', () => {
+    const p = getSystemHostsPath()
+    if (process.platform === 'linux') {
+      expect(p).toBe('/etc/hosts')
+    } else {
+      expect(p.toLowerCase().replace(/\//g, '\\')).toContain('system32\\drivers\\etc\\hosts')
+    }
   })
 })
 

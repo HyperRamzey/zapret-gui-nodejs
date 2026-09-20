@@ -229,3 +229,40 @@ export function materializeArgsForSpawn(
 ): string[] {
   return materializeArgs(args, opts).map((a) => a.replace(/"/g, ''))
 }
+
+/**
+ * Extract `--hostlist*=` / `--ipset*=` file references from materialized
+ * engine args (call AFTER placeholder substitution).
+ * `--hostlist-domains=` (inline domains, not a file) and `--wf-*` are
+ * ignored; values still containing `<...>` placeholders are skipped.
+ * Pure — covered by unit tests.
+ */
+export function extractListFileRefs(args: string[]): string[] {
+  const out: string[] = []
+  for (const raw of args) {
+    const a = String(raw).replace(/"/g, '').trim()
+    const m = a.match(/^--(?:hostlist|hostlist-exclude|ipset|ipset-exclude)=(.+)$/i)
+    if (!m) continue
+    const v = (m[1] ?? '').trim()
+    if (v === '' || v.includes('<') || v.includes('>')) continue
+    if (!out.includes(v)) out.push(v)
+  }
+  return out
+}
+
+/**
+ * Safe stub content for an auto-created list file: the engine fatally
+ * rejects a MISSING ipset file (`failed to register ipset`, exit 1), while
+ * an empty/missing hostlist is tolerated — but a missing file is never OK
+ * to leave, so recreate it. Mirrors the first-run seeding stubs.
+ * Pure — covered by unit tests.
+ */
+export function stubContentForListFile(name: string): string {
+  if (pathBasename(name).toLowerCase().startsWith('ipset-')) return '203.0.113.113/32\n'
+  return '# Never leave this file empty\ndomain.example.abc\n'
+}
+
+/** Basename without fs/path imports (keeps this module dependency-free). */
+function pathBasename(p: string): string {
+  return String(p).replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? p
+}

@@ -4,7 +4,7 @@ import { useUi } from '../store'
 import { Btn, Card, Row, Spinner } from '../components/ui'
 
 export default function Settings(): React.JSX.Element {
-  const { t, settings, status, applySettings, busy, resetAll, refreshStatus, tgProxySettings, updateTgProxySettings, resetTgProxySettings, settingsHighlight, setSettingsHighlight } =
+  const { t, settings, status, platform, applySettings, busy, resetAll, refreshStatus, tgProxySettings, updateTgProxySettings, resetTgProxySettings, settingsHighlight, setSettingsHighlight } =
     useUi()
   const [resetDone, setResetDone] = useState<string | null>(null)
   const [portDraft, setPortDraft] = useState<string | null>(null)
@@ -31,18 +31,22 @@ export default function Settings(): React.JSX.Element {
 
   // A running zapret (service or stray winws.exe) locks the data files —
   // wiping then fails with EPERM, so the reset stays disabled until stopped.
+  // Exception: an UNPRIVILEGED Linux pgrep hit is unverifiable (may be a
+  // stale/foreign daemon) and the user cannot stop it anyway (actions need
+  // root) — blocking reset on it would deadlock the UI. resetAppData still
+  // stops services best-effort (one prompt) and always resets files.
   const zapretActive =
     status?.zapret === 'RUNNING' ||
     status?.zapret === 'START_PENDING' ||
     status?.zapret === 'STOP_PENDING' ||
-    status?.winwsRunning === true
+    (status?.winwsRunning === true && (platform !== 'linux' || status?.isAdmin === true))
   const resetDisabled = resetting || zapretActive
 
   async function onReset(): Promise<void> {
     setResetDone(null)
     if (!window.confirm(t('settings.resetConfirm'))) return
     const r = await resetAll()
-    if (r) setResetDone(t(r.servicesRemoved ? 'settings.resetDone' : 'settings.resetNoAdmin'))
+    if (r) setResetDone(t(r.servicesRemoved ? 'settings.resetDone' : platform === 'linux' ? 'settings.resetNoRoot' : 'settings.resetNoAdmin'))
   }
 
   async function onResetTgProxy(): Promise<void> {
@@ -88,7 +92,7 @@ export default function Settings(): React.JSX.Element {
       <h1 className="text-xl font-semibold">{t('nav.settings')}</h1>
 
       <Card>
-        <Row label={t('settings.autoLaunch')}>
+        <Row label={platform === 'linux' ? t('settings.autoLaunchLinux') : t('settings.autoLaunch')}>
           <Toggle value={settings?.autoLaunch ?? false} onChange={(v) => void applySettings({ autoLaunch: v })} />
         </Row>
         <Row label={t('settings.startMinimized')}>

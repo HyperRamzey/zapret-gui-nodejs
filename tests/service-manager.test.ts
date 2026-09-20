@@ -13,7 +13,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 })
 
 import { execFile } from 'node:child_process'
-import { parseScState, mapServiceStatus, queryServiceState, getIPSetMode, setIPSetMode, getGameFilterMode, setGameFilterMode, expandEnvVars, normalizeWindowsPath, extractExePathFromImagePath, detectServiceOwnership, friendlyServiceError, buildServiceImagePath, quoteImagePathForSc } from '../src/main/service-manager'
+import { parseScState, mapServiceStatus, queryServiceState, getIPSetMode, setIPSetMode, getGameFilterMode, setGameFilterMode, resolveGameFilterPorts, readGameFilterFile, validateGameFilterRange, expandEnvVars, normalizeWindowsPath, extractExePathFromImagePath, detectServiceOwnership, friendlyServiceError, buildServiceImagePath, quoteImagePathForSc } from '../src/main/service-manager'
 import { compareVersions } from '../src/main/strategy-updater'
 
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>
@@ -155,6 +155,61 @@ describe('getGameFilterMode / setGameFilterMode', () => {
     expect(getGameFilterMode(dir)).toBe('disabled')
     fs.rmSync(dir, { recursive: true, force: true })
   })
+
+  it('reads legacy bare-token files', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-game-legacy-'))
+    fs.mkdirSync(path.join(dir, 'utils'), { recursive: true })
+    for (const mode of ['all', 'tcp', 'udp'] as const) {
+      fs.writeFileSync(path.join(dir, 'utils', 'game_filter.enabled'), mode, 'utf8')
+      expect(getGameFilterMode(dir)).toBe(mode)
+    }
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('reads service.bat 1.10.3 format with custom ranges', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-game-new-'))
+    fs.mkdirSync(path.join(dir, 'utils'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'utils', 'game_filter.enabled'), 'mode=tcp\ntcp=2000-3000\nudp=4000-5000\n', 'utf8')
+    expect(resolveGameFilterPorts(dir)).toEqual({ tcp: '2000-3000', udp: '12', mode: 'tcp' })
+    fs.writeFileSync(path.join(dir, 'utils', 'game_filter.enabled'), 'mode=all\ntcp=2000-3000\nudp=4000-5000\n', 'utf8')
+    expect(resolveGameFilterPorts(dir)).toEqual({ tcp: '2000-3000', udp: '4000-5000', mode: 'all' })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('falls back to defaults on garbage', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-game-garbage-'))
+    fs.mkdirSync(path.join(dir, 'utils'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'utils', 'game_filter.enabled'), 'mode=bogus\ntcp=99999\ udp=0\n', 'utf8')
+    expect(resolveGameFilterPorts(dir)).toEqual({ tcp: '12', udp: '12', mode: 'disabled' })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('preserves custom ranges when switching modes', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-game-preserve-'))
+    fs.mkdirSync(path.join(dir, 'utils'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'utils', 'game_filter.enabled'), 'mode=all\ntcp=2000-3000\nudp=4000-5000\n', 'utf8')
+    setGameFilterMode(dir, 'udp')
+    expect(resolveGameFilterPorts(dir)).toEqual({ tcp: '12', udp: '4000-5000', mode: 'udp' })
+    expect(readGameFilterFile(dir).tcpRange).toBe('2000-3000')
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('validateGameFilterRange', () => {
+  it('accepts ports and ranges', () => {
+    expect(validateGameFilterRange('1024-65535')).toBe('1024-65535')
+    expect(validateGameFilterRange('80,443,8000-8100')).toBe('80,443,8000-8100')
+    expect(validateGameFilterRange(' 1024 - 1934 ')).toBe('1024-1934')
+  })
+  it('rejects invalid input', () => {
+    expect(validateGameFilterRange('')).toBeNull()
+    expect(validateGameFilterRange('0')).toBeNull()
+    expect(validateGameFilterRange('080')).toBeNull()
+    expect(validateGameFilterRange('65536')).toBeNull()
+    expect(validateGameFilterRange('9000-8000')).toBeNull()
+    expect(validateGameFilterRange('80,,443')).toBeNull()
+    expect(validateGameFilterRange('abc')).toBeNull()
+  })
 })
 
 describe('foreign zapret ownership detection', () => {
@@ -231,5 +286,56 @@ describe('quoteImagePathForSc', () => {
     expect(quoteImagePathForSc('"C:\\bin\\winws.exe" --foo=%BAR%')).toBe(
       '"\\"C:\\bin\\winws.exe\\" --foo=%BAR%"'
     )
+  })
+})
+
+describe('ensureListFilesExist', () => {
+  it('heals missing files: bundled restore, user stub, leaves existing alone', async () => {
+    const { ensureListFilesExist } = await import('../src/main/service-manager')
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-lists-'))
+    try {
+      const listsDir = path.join(tmp, 'lists')
+      fs.mkdirSync(listsDir, { recursive: true })
+      // Existing custom file must survive untouched.
+      fs.writeFileSync(path.join(listsDir, 'list-exclude.txt'), 'custom\n')
+      const logs: string[] = []
+      const healed = ensureListFilesExist(
+        listsDir,
+        [
+          '--hostlist-exclude=' + path.join(listsDir, 'list-exclude.txt'),
+          '--hostlist=' + path.join(listsDir, 'list-general.txt'),
+          '--ipset-exclude=' + path.join(listsDir, 'ipset-exclude-user.txt')
+        ],
+        (t) => logs.push(t)
+      )
+      expect(healed).toEqual(['list-general.txt', 'ipset-exclude-user.txt'])
+      expect(fs.readFileSync(path.join(listsDir, 'list-exclude.txt'), 'utf8')).toBe('custom\n')
+      // Stock list restored from bundled-assets (byte-identical).
+      expect(fs.readFileSync(path.join(listsDir, 'list-general.txt'), 'utf8')).toBe(
+        fs.readFileSync(path.join(process.cwd(), 'bundled-assets', 'lists', 'list-general.txt'), 'utf8')
+      )
+      // Unknown user file gets the ipset sentinel stub.
+      expect(fs.readFileSync(path.join(listsDir, 'ipset-exclude-user.txt'), 'utf8')).toBe('203.0.113.113/32\n')
+      expect(logs.some((l) => l.includes('Restored'))).toBe(true)
+      expect(logs.some((l) => l.includes('Created'))).toBe(true)
+      // Second run is a no-op.
+      expect(ensureListFilesExist(listsDir, ['--ipset-exclude=' + path.join(listsDir, 'ipset-exclude-user.txt')])).toEqual([])
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to create files outside the lists dir', async () => {
+    const { ensureListFilesExist } = await import('../src/main/service-manager')
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-lists-'))
+    try {
+      const listsDir = path.join(tmp, 'lists')
+      fs.mkdirSync(listsDir, { recursive: true })
+      const outside = path.join(tmp, 'evil.txt')
+      expect(() => ensureListFilesExist(listsDir, [`--ipset=${outside}`])).toThrow(/outside the lists folder/)
+      expect(fs.existsSync(outside)).toBe(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
   })
 })

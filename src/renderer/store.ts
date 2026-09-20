@@ -7,6 +7,7 @@ import { create } from 'zustand'
 import type {
   AppSettings,
   AppTheme,
+  AppPlatform,
   BypassCheckResult,
   BypassTargetId,
   ConfigTesterAnalyticsRow,
@@ -68,6 +69,9 @@ export function syncThemeClass(theme: AppTheme): void {
 interface UiState {
   page: Page
   setPage: (p: Page) => void
+  platform: AppPlatform
+  refreshPlatform: () => Promise<void>
+  grantRoot: () => Promise<boolean>
   locale: Locale
   theme: AppTheme
   t: (key: I18nKey) => string
@@ -161,6 +165,29 @@ async function call<T>(key: string, fn: () => Promise<T>, set: (p: Partial<UiSta
 export const useUi = create<UiState>((set, get) => ({
   page: 'dashboard',
   setPage: (page) => set({ page }),
+  platform: 'win32',
+  refreshPlatform: async () => {
+    try {
+      const platform = await window.zapret.getPlatform()
+      set({ platform })
+    } catch {
+      /* default stays win32 */
+    }
+  },
+  grantRoot: async () => {
+    try {
+      get().setBusy('root', true)
+      await window.zapret.ensureRoot()
+      set({ error: null })
+      await get().refreshStatus()
+      return true
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+      return false
+    } finally {
+      get().setBusy('root', false)
+    }
+  },
   locale: 'ru',
   theme: 'dark',
   t: (key) => translate(get().locale, key),
@@ -309,8 +336,8 @@ export const useUi = create<UiState>((set, get) => ({
       })
     }
     const settings = await call('init', () => window.zapret.getSettings(), set, get)
-    if (settings) {
-      set({ settings, locale: settings.locale, theme: settings.theme })
+    await get().refreshPlatform()
+    if (settings) {      set({ settings, locale: settings.locale, theme: settings.theme })
       syncThemeClass(settings.theme)
       // Restore lines buffered before this view mounted (e.g. after a
       // reload) — skipped when logs are switched off.

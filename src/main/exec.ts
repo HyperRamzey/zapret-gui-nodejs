@@ -1,11 +1,16 @@
 /**
  * Process execution helpers: plain exec, admin detection and UAC elevation.
  *
- * Strategy: the app asks to run elevated once (button "relaunch as admin").
+ * Windows strategy: the app asks to run elevated once (button "relaunch as admin").
  * Service/hosts operations then run directly.
+ *
+ * Linux strategy: Electron NEVER runs as root. Privileged work goes through
+ * `linux-privilege` (pkexec/sudo per-command + `sudo -v` keep-alive), so the
+ * userspace app merely *holds* root auth without ever being root itself.
  * @module main/exec
  */
 import { spawn, execFile } from 'node:child_process'
+import { isLinux } from './platform'
 
 export interface ExecResult {
   stdout: string
@@ -54,8 +59,23 @@ export function runPowershell(script: string, timeoutMs = 30000): Promise<ExecRe
   return run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `${utf8}${script}`], { timeoutMs })
 }
 
-/** True when the current process runs elevated (admin). */
+/** POSIX `sh -c <command>` wrapper (Linux pipelines, pgrep, ip, ...). */
+export function runSh(command: string, timeoutMs = 30000): Promise<ExecResult> {
+  return run('sh', ['-c', command], { timeoutMs })
+}
+
+/** True when the current process runs elevated (admin / root-held). */
 export async function isAdmin(): Promise<boolean> {
+  if (isLinux()) {
+    // On Linux "admin" means "we currently hold usable root via the
+    // privilege helper" — Electron itself is never root (see linux-privilege).
+    try {
+      const { hasRootPrivilege } = await import('./linux-privilege')
+      return await hasRootPrivilege()
+    } catch {
+      return false
+    }
+  }
   // `net session` succeeds only for admins.
   const r = await runCmd('net session >nul 2>&1')
   return r.code === 0
@@ -63,6 +83,11 @@ export async function isAdmin(): Promise<boolean> {
 
 /** Relaunch the whole Electron app elevated (used by the dashboard button). */
 export async function relaunchAppAsAdmin(appPath: string, appArgs: string[]): Promise<boolean> {
+  if (isLinux()) {
+    // Linux never relaunches Electron as root: the userspace app holds root
+    // through the privilege helper instead (see linux-privilege).
+    throw new Error('Not supported on Linux: grant root access instead — the app never runs as root.')
+  }
   const esc = (s: string): string => s.replace(/'/g, "''")
   // Filter out Electron's own argv[0] (exe path) if the caller passed
   // process.argv.slice(1) from a packaged app — passing the exe as an
@@ -89,7 +114,8 @@ export function spawnLong(file: string, args: string[], cwd?: string) {
 }
 
 /**
- * Force-kill a process tree by PID (`taskkill /PID x /F /T`).
+ * Force-kill a process tree by PID (`taskkill /PID x /F /T` on Windows,
+ * `kill -KILL` on POSIX).
  * `ChildProcess.kill()` is routinely ignored by winws.exe on Windows, so a
  * PID-targeted taskkill is the reliable fallback. Unlike `/IM <image>` it
  * never touches foreign processes with the same image name.
@@ -97,6 +123,20 @@ export function spawnLong(file: string, args: string[], cwd?: string) {
  */
 export async function killPidTree(pid: number): Promise<void> {
   if (!Number.isInteger(pid) || pid <= 0) return
+  if (isLinux()) {
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {
+      /* already dead */
+    }
+    await new Promise((r) => setTimeout(r, 500))
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      /* already dead */
+    }
+    return
+  }
   try {
     await runCmd(`taskkill /PID ${pid} /F /T >nul 2>&1`, 8000)
   } catch {

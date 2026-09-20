@@ -15,7 +15,7 @@ vi.mock('electron-updater', () => ({
   }
 }))
 
-import { setupAutoUpdater, __resetAppUpdaterForTest } from '../src/main/app-updater'
+import { setupAutoUpdater, __resetAppUpdaterForTest, isMissingUpdateMetadataError } from '../src/main/app-updater'
 
 // Isolate fs reads: point appData at a fresh tmp dir (setup.ts maps it to cwd).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-autocheck-'))
@@ -58,5 +58,21 @@ describe('setupAutoUpdater scheduled checks', () => {
     setupAutoUpdater()
 
     expect(checkForUpdates).not.toHaveBeenCalled()
+  })
+})
+
+describe('isMissingUpdateMetadataError', () => {
+  it('matches a missing latest-linux.yml (HttpError 404)', () => {
+    expect(
+      isMissingUpdateMetadataError(
+        'Cannot find latest-linux.yml in the latest release artifacts (https://github.com/AvenCores/zapret-gui-nodejs/releases/download/v1.0.5/latest-linux.yml): HttpError: 404 "method: GET url: https://github.com/AvenCores/zapret-gui-nodejs/releases/download/v1.0.5/latest-linux.yml"'
+      )
+    ).toBe(true)
+  })
+
+  it('does not swallow genuine failures', () => {
+    expect(isMissingUpdateMetadataError('HttpError: 404 Not Found')).toBe(false)
+    expect(isMissingUpdateMetadataError('net::ERR_INTERNET_DISCONNECTED')).toBe(false)
+    expect(isMissingUpdateMetadataError('')).toBe(false)
   })
 })
