@@ -23,6 +23,7 @@ import type { Strategy, ConfigTestMode, ConfigTesterAnalyticsRow, ConfigTesterEv
 import { run, runCmd, runPowershell, isAdmin, killPidTree } from './exec'
 import { queryServiceState, isProcessRunning, resolveGameFilterPorts, ensureListFilesExist } from './service-manager'
 import { materializeArgsForSpawn } from './strategy-parser'
+import { isLinux } from './platform'
 import { WINWS_EXE, WINDIVERT_SERVICE } from '../shared/constants'
 
 export type { ConfigTestMode } from '../shared/types'
@@ -304,7 +305,7 @@ export function headProbe(urlStr: string, timeoutMs: number, variant: TlsVariant
 /** ICMP ping (per platform). Returns e.g. `12 ms` or `Timeout`. */
 export async function pingOnce(host: string, timeoutMs = 1000): Promise<{ text: string; ok: boolean }> {
   const safe = String(host).replace(/[^A-Za-z0-9.:_-]/g, '').slice(0, 253) || '127.0.0.1'
-  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+  if (isLinux()) {
     const secs = Math.max(1, Math.ceil(timeoutMs / 1000))
     const r = await run('ping', ['-c', '1', '-W', String(secs), safe], { timeoutMs: timeoutMs + 3000 })
     const out = `${r.stdout}\n${r.stderr}`
@@ -608,7 +609,7 @@ async function killWinws(): Promise<void> {
     /* ignore */
   }
   activeChild = null
-  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+  if (isLinux()) {
     try {
       const { runPrivileged } = await import('./linux-privilege')
       const { NFQWS_MATCH_PATTERN } = await import('./linux-service')
@@ -622,7 +623,7 @@ async function killWinws(): Promise<void> {
 }
 
 async function isEngineProcessRunning(): Promise<boolean> {
-  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+  if (isLinux()) {
     try {
       const { isNfqwsRunning } = await import('./linux-service')
       return await isNfqwsRunning()
@@ -744,7 +745,7 @@ export async function restoreWindivert(
   before: WindivertSnapshot,
   emit: (e: ConfigTesterEvent) => void
 ): Promise<void> {
-  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') return
+  if (isLinux()) return
   for (const svc of WINDIVERT_SERVICES) {
     const prev = before[svc] ?? 'UNKNOWN'
     const after = await queryWindivertState(svc)
@@ -795,7 +796,7 @@ export async function runConfigTests(opts: RunConfigTestsOptions): Promise<{ bes
   const maxParallel = opts.maxParallel ?? Math.min(16, Math.max(8, (osCpuCount() * 2) | 0))
 
   if (strategies.length === 0) throw new Error('No strategies selected for testing')
-  const onLinux = process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux'
+  const onLinux = isLinux()
   if (!(await isAdmin())) {
     throw new Error(onLinux ? 'Root privileges are required to run tests. Grant root access first.' : 'Administrator rights are required to run tests')
   }
@@ -1121,7 +1122,7 @@ export function abortActiveChild(): void {
   if (typeof child.pid === 'number' && child.pid > 0) {
     void killPidTree(child.pid)
   }
-  if ((process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') && typeof child.pid === 'number' && child.pid > 0) {
+  if (isLinux() && typeof child.pid === 'number' && child.pid > 0) {
     void import('./linux-privilege').then(({ runPrivileged }) => {
       void import('./linux-service').then(({ NFQWS_MATCH_PATTERN }) => {
         runPrivileged('pkill', ['-f', NFQWS_MATCH_PATTERN], 8000).catch(() => undefined)

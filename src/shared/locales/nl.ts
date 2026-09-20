@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'Geïnstalleerd in een OneDrive-map — verplaats bijv. naar C:\\zapret',
   'diag.detail.dnsOk': 'Versleutelde DNS ingesteld',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Stel Secure DNS in in browser / Windows 11-instellingen',
   'diag.detail.sysOk': 'WinDivert64.sys aanwezig',
   'diag.detail.sysFail': 'WinDivert64.sys NIET gevonden in bin/',

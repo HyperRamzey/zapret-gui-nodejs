@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'OneDrive フォルダ内にインストールされています — 例えば C:\\zapret に移動してください',
   'diag.detail.dnsOk': '暗号化 DNS が設定されています',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'ブラウザ / Windows 11 の設定で Secure DNS を設定してください',
   'diag.detail.sysOk': 'WinDivert64.sys が存在します',
   'diag.detail.sysFail': 'bin/ に WinDivert64.sys が見つかりません',

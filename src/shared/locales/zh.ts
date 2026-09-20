@@ -165,6 +165,7 @@
   'diag.detail.ok': '正常',
   'diag.detail.onedriveFail': '安装在 OneDrive 文件夹中 — 请移动，例如移到 C:\\zapret',
   'diag.detail.dnsOk': '已配置加密 DNS',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': '请在浏览器 / Windows 11 设置中配置 Secure DNS',
   'diag.detail.sysOk': 'WinDivert64.sys 存在',
   'diag.detail.sysFail': '在 bin/ 中未找到 WinDivert64.sys',

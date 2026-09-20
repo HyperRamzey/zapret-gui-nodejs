@@ -165,6 +165,7 @@
   'diag.detail.ok': 'موفق',
   'diag.detail.onedriveFail': 'در پوشه OneDrive نصب شده است — آن را منتقل کنید، مثلا به C:\\zapret',
   'diag.detail.dnsOk': 'DNS رمزنگاری‌شده پیکربندی شده است',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Secure DNS را در مرورگر / تنظیمات Windows 11 پیکربندی کنید',
   'diag.detail.sysOk': 'WinDivert64.sys موجود است',
   'diag.detail.sysFail': 'WinDivert64.sys در bin/ یافت نشد',

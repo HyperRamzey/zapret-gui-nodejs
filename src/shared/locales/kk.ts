@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'OneDrive қалтасына орнатылған — мысалы, C:\\zapret жолына көшіріңіз',
   'diag.detail.dnsOk': 'Шифрланған DNS бапталған',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Браузерде / Windows 11 параметрлерінде Secure DNS баптаңыз',
   'diag.detail.sysOk': 'WinDivert64.sys орнында',
   'diag.detail.sysFail': 'WinDivert64.sys bin/ ішінде ТАБЫЛМАДЫ',

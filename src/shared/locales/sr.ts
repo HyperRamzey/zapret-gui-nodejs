@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'Instalirano u OneDrive fasciklu — premestite npr. u C:\\zapret',
   'diag.detail.dnsOk': 'Šifrovani DNS je podešen',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Podesite Secure DNS u pregledaču / Windows 11 podešavanjima',
   'diag.detail.sysOk': 'WinDivert64.sys je prisutan',
   'diag.detail.sysFail': 'WinDivert64.sys NIJE pronađen u bin/',

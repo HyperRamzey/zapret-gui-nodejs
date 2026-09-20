@@ -165,6 +165,7 @@
   'diag.detail.ok': 'Tamam',
   'diag.detail.onedriveFail': 'OneDrive klasörüne kurulmuş — örneğin C:\\zapret konumuna taşıyın',
   'diag.detail.dnsOk': 'Şifreli DNS yapılandırıldı',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Tarayıcıda / Windows 11 ayarlarında Secure DNS yapılandırın',
   'diag.detail.sysOk': 'WinDivert64.sys mevcut',
   'diag.detail.sysFail': 'WinDivert64.sys bin/ içinde BULUNAMADI',

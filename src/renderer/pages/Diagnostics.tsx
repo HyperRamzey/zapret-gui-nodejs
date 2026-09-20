@@ -15,7 +15,7 @@ function icon(level: DiagnosticCheck['level']): string {
 }
 
 export default function Diagnostics(): React.JSX.Element {
-  const { t, setError, status, locale } = useUi()
+  const { t, setError, status, locale, platform } = useUi()
   const [checks, setChecks] = useState<DiagnosticCheck[] | null>(null)
   const [running, setRunning] = useState<boolean>(false)
   const [toolOut, setToolOut] = useState<string | null>(null)
@@ -108,15 +108,19 @@ export default function Diagnostics(): React.JSX.Element {
           <Btn variant="secondary" disabled={disabled} onClick={() => void tool('cache', () => window.zapret.clearDiscordCache())}>
             {t('diag.clearDiscord')}
           </Btn>
-          <Btn
-            variant="danger"
-            disabled={disabled}
-            onClick={() => {
-              if (window.confirm(t('diag.removeConflicts') + '?')) void tool('conflicts', () => window.zapret.removeConflicts())
-            }}
-          >
-            {t('diag.removeConflicts')}
-          </Btn>
+          {/* Conflicting-services removal is Windows-only (SCM services):
+              the IPC handler is a no-op returning [] on Linux. */}
+          {platform !== 'linux' ? (
+            <Btn
+              variant="danger"
+              disabled={disabled}
+              onClick={() => {
+                if (window.confirm(t('diag.removeConflicts') + '?')) void tool('conflicts', () => window.zapret.removeConflicts())
+              }}
+            >
+              {t('diag.removeConflicts')}
+            </Btn>
+          ) : null}
         </div>
         {toolOut ? (
           <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-100 p-3 font-mono text-[11px] text-slate-800 dark:bg-black/50 dark:text-slate-200">

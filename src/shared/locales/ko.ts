@@ -165,6 +165,7 @@
   'diag.detail.ok': '정상',
   'diag.detail.onedriveFail': 'OneDrive 폴더에 설치되어 있습니다 — 예: C:\\zapret로 이동하세요',
   'diag.detail.dnsOk': '암호화 DNS가 구성되어 있습니다',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': '브라우저 / Windows 11 설정에서 Secure DNS를 구성하세요',
   'diag.detail.sysOk': 'WinDivert64.sys가 있습니다',
   'diag.detail.sysFail': 'bin/에서 WinDivert64.sys를 찾을 수 없습니다',

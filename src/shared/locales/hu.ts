@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'OneDrive mappába telepítve — helyezze át pl. ide: C:\\zapret',
   'diag.detail.dnsOk': 'Titkosított DNS beállítva',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Állítsa be a Secure DNS-t a böngészőben / Windows 11 beállításokban',
   'diag.detail.sysOk': 'WinDivert64.sys megtalálható',
   'diag.detail.sysFail': 'WinDivert64.sys NEM található a bin/ mappában',

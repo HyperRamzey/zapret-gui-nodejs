@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'مثبت داخل مجلد OneDrive — انقله، مثلًا إلى C:\\zapret',
   'diag.detail.dnsOk': 'تم تكوين DNS المشفر',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'قم بتكوين Secure DNS في المتصفح / إعدادات Windows 11',
   'diag.detail.sysOk': 'WinDivert64.sys موجود',
   'diag.detail.sysFail': 'WinDivert64.sys غير موجود في bin/',

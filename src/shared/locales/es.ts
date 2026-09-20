@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'Instalado en una carpeta OneDrive — muévelo, p. ej. a C:\\zapret',
   'diag.detail.dnsOk': 'DNS cifrado configurado',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Configura Secure DNS en el navegador / ajustes de Windows 11',
   'diag.detail.sysOk': 'WinDivert64.sys presente',
   'diag.detail.sysFail': 'WinDivert64.sys NO encontrado en bin/',

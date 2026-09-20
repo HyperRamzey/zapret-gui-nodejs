@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'Terpasang di dalam folder OneDrive — pindahkan, mis. ke C:\\zapret',
   'diag.detail.dnsOk': 'DNS terenkripsi sudah dikonfigurasi',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Konfigurasikan Secure DNS di browser / pengaturan Windows 11',
   'diag.detail.sysOk': 'WinDivert64.sys ada',
   'diag.detail.sysFail': 'WinDivert64.sys TIDAK ditemukan di bin/',

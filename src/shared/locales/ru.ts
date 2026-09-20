@@ -206,6 +206,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'Установлено в папку OneDrive — перенесите, например в C:\\zapret',
   'diag.detail.dnsOk': 'Шифрованный DNS настроен',
+  'diag.detail.dnsWarnLinux': 'Системный шифрованный DNS не обнаружен ({servers}) — включите DoH в браузере или DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Настройте Secure DNS в браузере / параметрах Windows 11',
   'diag.detail.sysOk': 'WinDivert64.sys на месте',
   'diag.detail.sysFail': 'WinDivert64.sys НЕ найден в bin/',

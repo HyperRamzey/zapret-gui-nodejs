@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'Instalat într-un folder OneDrive — mutați, de ex. în C:\\zapret',
   'diag.detail.dnsOk': 'DNS criptat configurat',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Configurați Secure DNS în browser / setările Windows 11',
   'diag.detail.sysOk': 'WinDivert64.sys prezent',
   'diag.detail.sysFail': 'WinDivert64.sys NU a fost găsit în bin/',

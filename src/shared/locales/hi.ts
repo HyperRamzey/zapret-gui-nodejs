@@ -165,6 +165,7 @@
   'diag.detail.ok': 'ठीक',
   'diag.detail.onedriveFail': 'OneDrive फ़ोल्डर में स्थापित है — इसे ले जाएँ, जैसे C:\\zapret में',
   'diag.detail.dnsOk': 'एन्क्रिप्टेड DNS कॉन्फ़िगर है',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'ब्राउज़र / Windows 11 सेटिंग्स में Secure DNS कॉन्फ़िगर करें',
   'diag.detail.sysOk': 'WinDivert64.sys मौजूद है',
   'diag.detail.sysFail': 'bin/ में WinDivert64.sys नहीं मिला',

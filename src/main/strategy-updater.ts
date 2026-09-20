@@ -9,10 +9,11 @@ import path from 'node:path'
 import https from 'node:https'
 import { execFile } from 'node:child_process'
 import { app } from 'electron'
-import { URLS, UPSTREAM_BRANCH, ENGINE_WIN64_DIR, ENGINE_FAKES_DIR, ENGINE_BIN_FILES, ENGINE_VERSION_FILE } from '../shared/constants'
+import { URLS, UPSTREAM_BRANCH, ENGINE_WIN64_DIR, ENGINE_FAKES_DIR, ENGINE_BIN_FILES, ENGINE_VERSION_FILE, WINDOWS_ONLY_BIN_FILES, LINUX_ONLY_BIN_FILES } from '../shared/constants'
 import type { DownloadProgress, EngineRelease, EngineVersionInfo, UpdateInfo } from '../shared/types'
 import { getListsDir, getStrategiesDir, getBinDir, getUtilsDir, getBundledAssetsDir } from './paths'
 import { parseBatContent } from './strategy-parser'
+import { isLinux } from './platform'
 import { getIPSetMode, setIPSetMode } from './service-manager'
 
 export type ProgressCb = (p: DownloadProgress) => void
@@ -252,7 +253,7 @@ export async function checkHosts(): Promise<HostsCheck> {
 
 /** Absolute path of the system hosts file (per platform). */
 export function getSystemHostsPath(): string {
-  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') return '/etc/hosts'
+  if (isLinux()) return '/etc/hosts'
   return path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
 }
 
@@ -296,11 +297,32 @@ function isAccessError(e: unknown): boolean {
 
 function hostsWriteError(what: string, hostsPath: string, e: unknown): Error {
   const detail = e instanceof Error ? e.message : String(e)
+  if (isLinux()) {
+    return new Error(
+      `Cannot ${what} the system hosts file (${hostsPath}): ${detail}. ` +
+        'Grant root access and retry (the app edits /etc/hosts via a privileged helper, never as root itself).'
+    )
+  }
   return new Error(
     `Cannot ${what} the system hosts file (${hostsPath}): ${detail}. ` +
       'Run the app as administrator and allow hosts-file changes in your antivirus ' +
       '(Defender "Controlled folder access" / hosts protection), then retry.'
   )
+}
+
+const WINDOWS_ONLY_BIN_LOWER = new Set((WINDOWS_ONLY_BIN_FILES as readonly string[]).map((n) => n.toLowerCase()))
+const LINUX_ONLY_BIN_LOWER = new Set((LINUX_ONLY_BIN_FILES as readonly string[]).map((n) => n.toLowerCase()))
+
+/**
+ * True for engine binaries foreign to the current OS (`winws.exe`/`WinDivert`
+ * on Linux, `nfqws` on Windows). `updateStrategiesFromGithub` syncs the
+ * upstream `bin/` tree verbatim — without this the Linux data dir collects
+ * megabytes of never-executed Windows binaries (plus a `_backup` snapshot
+ * of them on every update). Mirrors the seeding filter in `paths.ts`. Pure.
+ */
+export function isForeignEngineBinary(fileName: string): boolean {
+  const lower = fileName.toLowerCase()
+  return isLinux() ? WINDOWS_ONLY_BIN_LOWER.has(lower) : LINUX_ONLY_BIN_LOWER.has(lower)
 }
 
 /**
@@ -356,7 +378,7 @@ async function writeHostsFile(hostsPath: string, next: string): Promise<void> {
   } catch (e) {
     throw hostsWriteError('stage', hostsPath, e)
   }
-  if ((process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') && hostsPathNeedsPrivilege(hostsPath)) {
+  if (isLinux() && hostsPathNeedsPrivilege(hostsPath)) {
     // /etc/hosts is root-owned: install via the privilege helper so the
     // userspace app never runs as root.
     try {
@@ -514,7 +536,7 @@ export async function removeHosts(opts?: RemoveHostsOptions): Promise<boolean> {
 
 /** Copy the hosts file to its `.zapret-gui.bak` backup (root-aware on Linux). */
 async function backupHostsFile(hostsPath: string, backupPath: string): Promise<void> {
-  if ((process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') && hostsPathNeedsPrivilege(hostsPath)) {
+  if (isLinux() && hostsPathNeedsPrivilege(hostsPath)) {
     const { runPrivileged } = await import('./linux-privilege')
     const r = await runPrivileged('cp', ['-n', hostsPath, backupPath], 15000)
     if (r.code !== 0) throw new Error(`${r.stdout}\n${r.stderr}`.trim().slice(0, 300) || `exit ${r.code}`)
@@ -599,6 +621,8 @@ export async function updateStrategiesFromGithub(
       const relP = path.relative(srcDir, f)
       // Never clobber user lists.
       if (sub === 'lists' && /-user\.txt$/i.test(relP)) continue
+      // Never sync OS-foreign engine binaries (winws.exe/WinDivert on Linux).
+      if (sub === 'bin' && isForeignEngineBinary(path.basename(relP))) continue
       const dest = path.join(destDir, relP)
       if (!fs.existsSync(dest) || !filesEqual(f, dest)) {
         fs.mkdirSync(path.dirname(dest), { recursive: true })
@@ -679,7 +703,7 @@ function pruneOldBackups(dataDir: string, keep = 5): void {
 }
 
 function expandArchive(zipPath: string, dest: string): Promise<void> {
-  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+  if (isLinux()) {
     return new Promise((resolve, reject) => {
       // Prefer system unzip (handles large GitHub zips); fall back to
       // python3 zipfile when unzip is missing (minimal containers).
@@ -923,7 +947,7 @@ export async function updateEngineToTag(
   // winws.exe is locked while the service runs — quiesce best-effort so the
   // copy below does not fail with EBUSY/EPERM (user restarts it afterwards).
   say(`Stopping zapret service before engine update (if running)...`)
-  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+  if (isLinux()) {
     try {
       const { runPrivileged } = await import('./linux-privilege')
       const { NFQWS_MATCH_PATTERN } = await import('./linux-service')
@@ -959,7 +983,7 @@ export async function updateEngineToTag(
   await expandArchive(zipPath, extractDir)
   onProgress?.({ percent: 75, transferred: 0, total: null })
 
-  if (process.platform === 'linux' || process.env.TEST_PLATFORM === 'linux') {
+  if (isLinux()) {
     return installLinuxEngine(extractDir, dataBin, backupDir, cleanTag, say, onProgress)
   }
 

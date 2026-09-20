@@ -468,7 +468,7 @@ async function checkLinuxVpn(): Promise<DiagnosticCheck> {
   }
 }
 
-/** Linux suite: root/nft/nfqws/hosts/vpn. Reuses timeout wrapper. */
+/** Linux suite: root/nft/nfqws/hosts/vpn/proxy/dns. Reuses timeout wrapper. */
 export async function runLinuxDiagnostics(_installDir: string): Promise<DiagnosticCheck[]> {
   return Promise.all([
     withCheckTimeout(checkLinuxRoot(), { id: 'root', labelKey: 'diag.bfe' }),
@@ -476,6 +476,178 @@ export async function runLinuxDiagnostics(_installDir: string): Promise<Diagnost
     withCheckTimeout(Promise.resolve(checkLinuxNfqws()), { id: 'nfqws', labelKey: 'diag.sysfile' }),
     withCheckTimeout(checkLinuxNfqwsRunning(), { id: 'nfqwsRunning', labelKey: 'diag.foreign' }),
     withCheckTimeout(checkLinuxHosts(), { id: 'hosts', labelKey: 'diag.hosts' }),
-    withCheckTimeout(checkLinuxVpn(), { id: 'vpn', labelKey: 'diag.vpn' })
+    withCheckTimeout(checkLinuxVpn(), { id: 'vpn', labelKey: 'diag.vpn' }),
+    withCheckTimeout(checkLinuxProxy(), { id: 'proxy', labelKey: 'diag.proxy' }),
+    withCheckTimeout(Promise.resolve(checkLinuxDns()), { id: 'dns', labelKey: 'diag.dns' })
   ])
+}
+
+// ---------------------------------------------------------------------------
+// Linux proxy + encrypted-DNS checks
+// ---------------------------------------------------------------------------
+
+const PROXY_ENV_NAMES = [
+  'HTTPS_PROXY',
+  'https_proxy',
+  'HTTP_PROXY',
+  'http_proxy',
+  'ALL_PROXY',
+  'all_proxy'
+] as const
+
+/** First non-empty `*proxy` env var (pure — unit-tested). */
+export function findProxyEnv(env: NodeJS.ProcessEnv): { name: string; value: string } | null {
+  for (const name of PROXY_ENV_NAMES) {
+    const v = (env[name] ?? '').trim()
+    if (v !== '') return { name, value: v.slice(0, 160) }
+  }
+  return null
+}
+
+export interface GnomeProxyState {
+  mode: string
+  server: string
+}
+
+/** GNOME system proxy via gsettings (null when absent/disabled/unreadable). */
+async function detectGnomeProxy(): Promise<GnomeProxyState | null> {
+  try {
+    const r = await shCapture('gsettings', ['get', 'org.gnome.system.proxy', 'mode'], 8000)
+    if (r.code !== 0) return null
+    const mode = r.stdout.trim().replace(/^'|'$/g, '')
+    if (mode === '' || mode === 'none') return null
+    let server = mode
+    if (mode === 'manual') {
+      const host = (
+        await shCapture('gsettings', ['get', 'org.gnome.system.proxy.http', 'host'], 5000)
+      ).stdout.trim().replace(/^'|'$/g, '')
+      const port = (
+        await shCapture('gsettings', ['get', 'org.gnome.system.proxy.http', 'port'], 5000)
+      ).stdout.trim()
+      server = host !== '' ? `${host}:${port !== '' ? port : '?'}` : 'manual'
+    }
+    return { mode, server: server.slice(0, 160) }
+  } catch {
+    return null
+  }
+}
+
+function proxyWarn(server: string): DiagnosticCheck {
+  return {
+    id: 'proxy',
+    labelKey: 'diag.proxy',
+    level: 'warn',
+    detail: `proxy enabled (${server}) — make sure it is valid or disable it`,
+    detailKey: 'diag.detail.proxyOn',
+    detailParams: { server }
+  }
+}
+
+/**
+ * System proxy on Linux: `*proxy` env vars (affect the app's own fetches)
+ * plus the GNOME system proxy (affects browsers/Electron). Mirrors the
+ * Windows `checkProxy` posture: enabled → warn, otherwise ok. `gnome`
+ * override exists for unit tests (`undefined` = auto-detect).
+ */
+export async function checkLinuxProxy(
+  env: NodeJS.ProcessEnv = process.env,
+  gnome?: GnomeProxyState | null
+): Promise<DiagnosticCheck> {
+  const hit = findProxyEnv(env)
+  if (hit) return proxyWarn(`${hit.name}=${hit.value}`.slice(0, 160))
+  const g = gnome === undefined ? await detectGnomeProxy() : gnome
+  if (g) return proxyWarn(g.server)
+  return { id: 'proxy', labelKey: 'diag.proxy', level: 'ok', detail: 'disabled', detailKey: 'diag.detail.disabled' }
+}
+
+/** Last uncommented `DNSOverTLS=` value in resolved.conf content (pure). */
+export function parseResolvedConf(content: string): string | null {
+  let found: string | null = null
+  for (const line of content.split(/\r?\n/)) {
+    const t = line.trim()
+    if (t === '' || t.startsWith('#') || t.startsWith(';')) continue
+    const m = t.match(/^DNSOverTLS\s*=\s*([A-Za-z]+)/)
+    if (m) found = (m[1] ?? '').toLowerCase()
+  }
+  return found
+}
+
+/** `nameserver` entries of resolv.conf content (pure, deduplicated). */
+export function parseResolvConf(content: string): string[] {
+  const out: string[] = []
+  for (const line of content.split(/\r?\n/)) {
+    const m = line.trim().match(/^nameserver\s+(\S+)/)
+    if (m?.[1] && !out.includes(m[1])) out.push(m[1])
+  }
+  return out
+}
+
+export interface LinuxDnsInputs {
+  /** Effective systemd-resolved `DNSOverTLS` value (null when unknown). */
+  resolvedDot: string | null
+  /** Resolvers from `/etc/resolv.conf` (for context in the hint). */
+  resolvServers: string[]
+}
+
+function readLinuxDnsInputs(): LinuxDnsInputs {
+  let dot: string | null = null
+  try {
+    const parts: string[] = []
+    try {
+      parts.push(fs.readFileSync('/etc/systemd/resolved.conf', 'utf8'))
+    } catch {
+      /* not a systemd-resolved system */
+    }
+    try {
+      const dir = '/etc/systemd/resolved.conf.d'
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith('.conf')) continue
+        try {
+          parts.push(fs.readFileSync(path.join(dir, f), 'utf8'))
+        } catch {
+          /* unreadable drop-in */
+        }
+      }
+    } catch {
+      /* no drop-in dir */
+    }
+    for (const p of parts) {
+      const v = parseResolvedConf(p)
+      if (v) dot = v
+    }
+  } catch {
+    /* best-effort */
+  }
+  let servers: string[] = []
+  try {
+    servers = parseResolvConf(fs.readFileSync('/etc/resolv.conf', 'utf8'))
+  } catch {
+    /* best-effort */
+  }
+  return { resolvedDot: dot, resolvServers: servers }
+}
+
+/**
+ * Encrypted DNS on Linux: systemd-resolved `DNSOverTLS=yes|strict` counts
+ * as configured (mirrors the Windows DoH check posture: configured → ok,
+ * otherwise warn with a hint). `inputs` override exists for unit tests.
+ */
+export function checkLinuxDns(inputs: LinuxDnsInputs = readLinuxDnsInputs()): DiagnosticCheck {
+  const base = { id: 'dns', labelKey: 'diag.dns' } as const
+  if (inputs.resolvedDot === 'yes' || inputs.resolvedDot === 'strict') {
+    return {
+      ...base,
+      level: 'ok',
+      detail: `encrypted DNS via systemd-resolved (DNSOverTLS=${inputs.resolvedDot})`,
+      detailKey: 'diag.detail.dnsOk'
+    }
+  }
+  const servers = (inputs.resolvServers.length > 0 ? inputs.resolvServers.join(', ') : 'n/a').slice(0, 160)
+  return {
+    ...base,
+    level: 'warn',
+    detail: `no system-wide encrypted DNS detected (${servers}) — enable DoH in the browser or DoT (systemd-resolved)`,
+    detailKey: 'diag.detail.dnsWarnLinux',
+    detailParams: { servers }
+  }
 }

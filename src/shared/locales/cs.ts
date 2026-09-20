@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'Nainstalováno ve složce OneDrive — přesuňte např. do C:\\zapret',
   'diag.detail.dnsOk': 'Šifrovaný DNS nastaven',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Nastavte Secure DNS v prohlížeči / nastavení Windows 11',
   'diag.detail.sysOk': 'WinDivert64.sys nalezen',
   'diag.detail.sysFail': 'WinDivert64.sys NENALEZEN v bin/',

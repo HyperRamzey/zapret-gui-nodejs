@@ -165,6 +165,7 @@
   'diag.detail.ok': 'OK',
   'diag.detail.onedriveFail': 'Εγκαταστάθηκε σε φάκελο OneDrive — μετακινήστε το π.χ. στο C:\\zapret',
   'diag.detail.dnsOk': 'Το κρυπτογραφημένο DNS έχει ρυθμιστεί',
+  'diag.detail.dnsWarnLinux': 'No system-wide encrypted DNS detected ({servers}) — enable DoH in the browser or DoT (systemd-resolved)',
   'diag.detail.dnsWarn': 'Ρυθμίστε το Secure DNS στο πρόγραμμα περιήγησης / στις ρυθμίσεις των Windows 11',
   'diag.detail.sysOk': 'Το WinDivert64.sys υπάρχει',
   'diag.detail.sysFail': 'Το WinDivert64.sys ΔΕΝ βρέθηκε στο bin/',
