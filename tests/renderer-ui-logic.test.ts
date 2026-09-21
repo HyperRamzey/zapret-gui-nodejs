@@ -16,7 +16,8 @@ import {
   toBypassUi,
   diagTone,
   diagIcon,
-  splitStrategyName
+  splitStrategyName,
+  userListGuideKey
 } from '../src/renderer/lib/ui-logic'
 
 describe('countListEntries', () => {
@@ -167,5 +168,20 @@ describe('diagnostics pure', () => {
     expect(splitStrategyName('plain')).toEqual({ base: 'plain', tag: null })
     expect(splitStrategyName('(only-tag)')).toEqual({ base: '(only-tag)', tag: null })
     expect(splitStrategyName('a (b) (c)')).toEqual({ base: 'a (b)', tag: 'c' })
+  })
+})
+
+describe('userListGuideKey', () => {
+  it('maps known list files to guide keys', () => {
+    expect(userListGuideKey('list-general-user.txt')).toBe('lists.guideGeneral')
+    expect(userListGuideKey('list-exclude-user.txt')).toBe('lists.guideExclude')
+    expect(userListGuideKey('ipset-all.txt')).toBe('lists.guideIpset')
+    expect(userListGuideKey('ipset-exclude-user.txt')).toBe('lists.guideIpsetExclude')
+  })
+
+  it('is case-insensitive and null for unknown', () => {
+    expect(userListGuideKey('  LIST-GENERAL-USER.TXT ')).toBe('lists.guideGeneral')
+    expect(userListGuideKey('other-user.txt')).toBeNull()
+    expect(userListGuideKey('')).toBeNull()
   })
 })

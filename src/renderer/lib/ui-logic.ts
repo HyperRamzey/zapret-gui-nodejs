@@ -180,3 +180,24 @@ export function splitStrategyName(name: string): { base: string; tag: string | n
   if (!base) return { base: name, tag: null }
   return { base, tag: m[2].trim() }
 }
+
+/* ---------- Lists.tsx ---------- */
+
+export type UserListGuideKey =
+  | 'lists.guideGeneral'
+  | 'lists.guideExclude'
+  | 'lists.guideIpset'
+  | 'lists.guideIpsetExclude'
+
+/**
+ * Map a list file name to its guide i18n key (null for unknown files).
+ * Case-insensitive, ignores surrounding whitespace. Pure.
+ */
+export function userListGuideKey(name: string): UserListGuideKey | null {
+  const n = String(name ?? '').trim().toLowerCase()
+  if (n === 'list-general-user.txt') return 'lists.guideGeneral'
+  if (n === 'list-exclude-user.txt') return 'lists.guideExclude'
+  if (n === 'ipset-all.txt') return 'lists.guideIpset'
+  if (n === 'ipset-exclude-user.txt') return 'lists.guideIpsetExclude'
+  return null
+}

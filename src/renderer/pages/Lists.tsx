@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useUi } from '../store'
 import { Badge, Btn, Card, Spinner } from '../components/ui'
 import type { UserListMeta } from '../../shared/types'
-import { countListEntries as countEntries, dedupListContent as dedupContent, mergeAddEntries, sortListContent as sortContent, splitAddParts } from '../lib/ui-logic'
+import { countListEntries as countEntries, dedupListContent as dedupContent, mergeAddEntries, sortListContent as sortContent, splitAddParts, userListGuideKey } from '../lib/ui-logic'
 
 export default function Lists(): React.JSX.Element {
   const { t, setError } = useUi()
@@ -61,6 +61,7 @@ export default function Lists(): React.JSX.Element {
   const entries = useMemo(() => countEntries(content), [content])
   const meta = metas?.find((m) => m.name === selected) ?? null
   const isGeneral = selected === 'list-general-user.txt'
+  const guideKey = userListGuideKey(selected)
 
   async function reload(): Promise<void> {
     const requestName = selected
@@ -120,6 +121,33 @@ export default function Lists(): React.JSX.Element {
       <h1 className="text-xl font-semibold">{t('lists.title')}</h1>
       <p className="text-sm text-slate-600 dark:text-slate-300">{t('lists.hint')}</p>
 
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow dark:border-slate-700/60 dark:bg-slate-800/60">
+        <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t('lists.guideTitle')}</div>
+        <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
+          <li>
+            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[12px] dark:bg-black/40">list-general-user.txt</code>
+            {' — '}
+            {t('lists.guideGeneral')}
+          </li>
+          <li>
+            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[12px] dark:bg-black/40">list-exclude-user.txt</code>
+            {' — '}
+            {t('lists.guideExclude')}
+          </li>
+          <li>
+            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[12px] dark:bg-black/40">ipset-exclude-user.txt</code>
+            {' — '}
+            {t('lists.guideIpsetExclude')}
+          </li>
+          <li>
+            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[12px] dark:bg-black/40">ipset-all.txt</code>
+            {' — '}
+            {t('lists.guideIpset')}
+          </li>
+        </ul>
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('lists.guideNote')}</p>
+      </div>
+
       <div className="flex flex-wrap gap-2">
         {metas.map((m) => (
           <button
@@ -166,6 +194,14 @@ export default function Lists(): React.JSX.Element {
               {saving ? <Spinner /> : t('action.save')}
             </Btn>
           </div>
+
+          {guideKey ? (
+            <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+              <span className="font-mono">{selected}</span>
+              {' — '}
+              {t(guideKey)}
+            </p>
+          ) : null}
 
           <div className="mb-2 flex gap-2">
             <input
