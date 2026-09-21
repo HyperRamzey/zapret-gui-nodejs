@@ -79,6 +79,8 @@ const api = {
     ipcRenderer.invoke(IPC.updateEngine, tag),
   runDiagnostics: (): Promise<DiagnosticCheck[]> => ipcRenderer.invoke(IPC.runDiagnostics),
   checkBypass: (id: BypassTargetId): Promise<BypassCheckResult> => ipcRenderer.invoke(IPC.checkBypass, id),
+  checkBypassUrl: (id: string, url: string): Promise<BypassCheckResult> =>
+    ipcRenderer.invoke(IPC.checkBypassUrl, { id, url }),
   clearDiscordCache: (): Promise<string[]> => ipcRenderer.invoke(IPC.clearDiscordCache),
   removeConflicts: (): Promise<string[]> => ipcRenderer.invoke(IPC.removeConflicts),
   startConfigTester: (strategyIds: string[], mode: ConfigTestMode): Promise<boolean> =>

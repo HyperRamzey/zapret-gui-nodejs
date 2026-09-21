@@ -107,6 +107,10 @@ export const LOG_TOTAL_LIMIT = LOG_BUFFER_LIMITS.app + LOG_BUFFER_LIMITS.zapret 
 export const GAME_FILTER_FLAG = 'game_filter.enabled'
 export const CHECK_UPDATES_FLAG = 'check_updates.enabled'
 export const BYPASS_CHECK_TIMEOUT_MS = 10000
+/** Max user-defined sites in the dashboard bypass check. */
+export const MAX_CUSTOM_BYPASS_TARGETS = 20
+/** Prefix for user-defined bypass target ids (`custom-<rand>`). */
+export const CUSTOM_BYPASS_ID_PREFIX = 'custom-'
 
 /** Targets for the dashboard bypass test (lightweight endpoints). */
 export const BYPASS_TARGETS = [

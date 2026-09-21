@@ -13,6 +13,7 @@ import type {
   ConfigTesterAnalyticsRow,
   ConfigTesterEvent,
   ConfigTestMode,
+  CustomBypassTarget,
   HostsCheckResult,
   LogCategory,
   LogLine,
@@ -23,7 +24,12 @@ import type {
   TgProxyStatus
 } from '../shared/types'
 import { translate, type I18nKey, type Locale } from '../shared/i18n'
-import { LOG_BUFFER_LIMITS } from '../shared/constants'
+import { BYPASS_TARGETS, LOG_BUFFER_LIMITS } from '../shared/constants'
+import {
+  MAX_CUSTOM_BYPASS_TARGETS,
+  buildCustomBypassTarget,
+  isCustomBypassId
+} from '../shared/bypass-custom'
 import { logCategoryOf } from '../shared/types'
 
 export type Page = 'dashboard' | 'strategies' | 'settings' | 'lists' | 'updates' | 'diagnostics' | 'logs'
@@ -100,8 +106,8 @@ interface UiState {
    */
   resetAll: () => Promise<{ settings: AppSettings; servicesRemoved: boolean } | null>
   /** Cached bypass results — survive Dashboard unmount on tab switches. */
-  bypass: Record<BypassTargetId, BypassCheckResult | null>
-  bypassChecking: Record<BypassTargetId, boolean>
+  bypass: Record<string, BypassCheckResult | null>
+  bypassChecking: Record<string, boolean>
   bypassCheckingAll: boolean
   /** Strategy key the cached `bypass` results were measured for. */
   bypassStrategyKey: string | null
@@ -127,8 +133,12 @@ interface UiState {
   setConfigMode: (m: ConfigTestMode) => void
   startConfigTests: (strategyIds: string[], mode: ConfigTestMode) => Promise<void>
   stopConfigTests: () => Promise<void>
-  checkBypassOne: (id: BypassTargetId) => Promise<void>
+  checkBypassOne: (id: string) => Promise<void>
   checkBypassAll: (strategyKey: string) => Promise<void>
+  /** Add a user-defined site to the bypass check (validates + persists). */
+  addCustomTarget: (input: string) => Promise<CustomBypassTarget | null>
+  /** Remove a user-defined site (persists + drops cached result). */
+  removeCustomTarget: (id: string) => Promise<void>
   /** Built-in Telegram MTProto→WS proxy dipslayed on Dashboard/Settings. */
   tgProxyStatus: TgProxyStatus | 'unknown'
   tgProxyStats: TgProxyStats | null
@@ -253,7 +263,14 @@ export const useUi = create<UiState>((set, get) => ({
     if (get().bypassChecking[id] || get().bypassCheckingAll) return
     set((s) => ({ bypassChecking: { ...s.bypassChecking, [id]: true } }))
     try {
-      const r = await window.zapret.checkBypass(id)
+      let r: BypassCheckResult
+      if (isCustomBypassId(id)) {
+        const target = get().settings?.customBypassTargets.find((t) => t.id === id)
+        if (!target) throw new Error(`Unknown custom target: ${id.slice(0, 64)}`)
+        r = await window.zapret.checkBypassUrl(target.id, target.url)
+      } else {
+        r = await window.zapret.checkBypass(id as BypassTargetId)
+      }
       set((s) => ({ bypass: { ...s.bypass, [id]: r } }))
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
@@ -264,14 +281,24 @@ export const useUi = create<UiState>((set, get) => ({
 
   checkBypassAll: async (strategyKey) => {
     if (get().bypassCheckingAll) return
-    set((s) => ({
-      bypassCheckingAll: true,
-      bypassChecking: { ...s.bypassChecking, youtube: true, cloudflare: true, discord: true }
-    }))
+    const customs = get().settings?.customBypassTargets ?? []
+    set((s) => {
+      const bypassChecking: Record<string, boolean> = {
+        ...s.bypassChecking,
+        youtube: true,
+        cloudflare: true,
+        discord: true
+      }
+      for (const t of customs) bypassChecking[t.id] = true
+      return { bypassCheckingAll: true, bypassChecking }
+    })
     try {
-      const ids: BypassTargetId[] = ['youtube', 'discord', 'cloudflare']
-      // One flaky target must not discard the other two results.
-      const settled = await Promise.allSettled(ids.map((id) => window.zapret.checkBypass(id)))
+      const builtInTasks = (BYPASS_TARGETS.map((t) => t.id) as BypassTargetId[]).map((id) =>
+        window.zapret.checkBypass(id)
+      )
+      const customTasks = customs.map((t) => window.zapret.checkBypassUrl(t.id, t.url))
+      // One flaky target must not discard the other results.
+      const settled = await Promise.allSettled([...builtInTasks, ...customTasks])
       const errors: string[] = []
       set((s) => {
         const bypass = { ...s.bypass }
@@ -288,7 +315,68 @@ export const useUi = create<UiState>((set, get) => ({
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
     } finally {
-      set({ bypassCheckingAll: false, bypassChecking: { youtube: false, cloudflare: false, discord: false } })
+      set((s) => {
+        const bypassChecking: Record<string, boolean> = { ...s.bypassChecking }
+        for (const k of Object.keys(bypassChecking)) bypassChecking[k] = false
+        bypassChecking.youtube = false
+        bypassChecking.cloudflare = false
+        bypassChecking.discord = false
+        return { bypassCheckingAll: false, bypassChecking }
+      })
+    }
+  },
+
+  addCustomTarget: async (input) => {
+    const t = get().t
+    const existing = get().settings?.customBypassTargets ?? []
+    if (existing.length >= MAX_CUSTOM_BYPASS_TARGETS) {
+      set({ error: t('dashboard.customLimit').replace('{max}', String(MAX_CUSTOM_BYPASS_TARGETS)) })
+      return null
+    }
+    const built = buildCustomBypassTarget(input)
+    if (!built) {
+      set({ error: t('dashboard.customInvalid') })
+      return null
+    }
+    const dup = existing.find((e) => e.url.toLowerCase() === built.url.toLowerCase())
+    if (dup) {
+      // Already tracked — just re-check it instead of duplicating.
+      void get().checkBypassOne(dup.id)
+      return dup
+    }
+    try {
+      const next = [...existing, built]
+      const settings = await window.zapret.saveSettings({ customBypassTargets: next })
+      set((s) => ({
+        settings,
+        error: null,
+        bypass: { ...s.bypass, [built.id]: s.bypass[built.id] ?? null },
+        bypassChecking: { ...s.bypassChecking, [built.id]: false }
+      }))
+      void get().checkBypassOne(built.id)
+      return built
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
+      return null
+    }
+  },
+
+  removeCustomTarget: async (id) => {
+    if (!isCustomBypassId(id)) return
+    const existing = get().settings?.customBypassTargets ?? []
+    if (!existing.some((t) => t.id === id)) return
+    try {
+      const next = existing.filter((t) => t.id !== id)
+      const settings = await window.zapret.saveSettings({ customBypassTargets: next })
+      set((s) => {
+        const bypass = { ...s.bypass }
+        const bypassChecking = { ...s.bypassChecking }
+        delete bypass[id]
+        delete bypassChecking[id]
+        return { settings, error: null, bypass, bypassChecking }
+      })
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) })
     }
   },
 

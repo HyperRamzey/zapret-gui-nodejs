@@ -2,14 +2,30 @@
 import React, { useEffect, useState } from 'react'
 import { bypassStrategyKeyOf, useUi } from '../store'
 import { Badge, Btn, Card, Code, Dot, Row, Spinner } from '../components/ui'
-import { BYPASS_TARGETS } from '../../shared/constants'
-import type { BypassTargetId, ServiceState } from '../../shared/types'
+import { BYPASS_TARGETS, MAX_CUSTOM_BYPASS_TARGETS } from '../../shared/constants'
+import { normalizeCustomUrlInput } from '../../shared/bypass-custom'
+import type { BypassTargetId, CustomBypassTarget, ServiceState } from '../../shared/types'
 import { shortExePath, stateKey, stateTone, toBypassUi, type BypassUi } from '../lib/ui-logic'
 
 function BypassTest(): React.JSX.Element {
-  const { t, status, settings, bypass, bypassChecking, bypassCheckingAll, bypassStrategyKey, checkBypassOne, checkBypassAll } =
-    useUi()
+  const {
+    t,
+    status,
+    settings,
+    bypass,
+    bypassChecking,
+    bypassCheckingAll,
+    bypassStrategyKey,
+    checkBypassOne,
+    checkBypassAll,
+    addCustomTarget,
+    removeCustomTarget
+  } = useUi()
   const strategyKey = bypassStrategyKeyOf(status?.activeStrategy ?? null, settings?.activeStrategyId ?? null)
+  const customTargets: CustomBypassTarget[] = settings?.customBypassTargets ?? []
+  const [customInput, setCustomInput] = useState('')
+  const [customError, setCustomError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
 
   // Results live in the global store, so tab switches remount this component
   // without losing them. Auto-check only on first ever visit or when the
@@ -26,6 +42,34 @@ function BypassTest(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategyKey, status !== null, settings !== null])
 
+  async function submitCustom(e?: React.FormEvent): Promise<void> {
+    e?.preventDefault()
+    if (adding || bypassCheckingAll) return
+    const value = customInput.trim()
+    if (value === '') return
+    if (customTargets.length >= MAX_CUSTOM_BYPASS_TARGETS) {
+      setCustomError(t('dashboard.customLimit').replace('{max}', String(MAX_CUSTOM_BYPASS_TARGETS)))
+      return
+    }
+    if (!normalizeCustomUrlInput(value)) {
+      setCustomError(t('dashboard.customInvalid'))
+      return
+    }
+    setAdding(true)
+    setCustomError(null)
+    try {
+      const created = await addCustomTarget(value)
+      if (created) {
+        setCustomInput('')
+        setCustomError(null)
+      } else {
+        setCustomError(t('dashboard.customInvalid'))
+      }
+    } finally {
+      setAdding(false)
+    }
+  }
+
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -39,7 +83,7 @@ function BypassTest(): React.JSX.Element {
       <div className="grid gap-3 sm:grid-cols-3">
         {BYPASS_TARGETS.map((target) => {
           const checking = bypassChecking[target.id] || bypassCheckingAll
-          const state: BypassUi = checking ? { status: 'checking' } : toBypassUi(bypass[target.id])
+          const state: BypassUi = checking ? { status: 'checking' } : toBypassUi(bypass[target.id] ?? null)
           return (
             <Card key={target.id}>
               <div className="flex items-center gap-2">
@@ -73,6 +117,91 @@ function BypassTest(): React.JSX.Element {
             </Card>
           )
         })}
+      </div>
+
+      <div className="mt-4">
+        <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
+          {t('dashboard.customTitle')}
+        </h3>
+        <form onSubmit={(e) => void submitCustom(e)} className="flex flex-col gap-2 sm:flex-row">
+          <input
+            value={customInput}
+            onChange={(e) => {
+              setCustomInput(e.target.value)
+              if (customError) setCustomError(null)
+            }}
+            placeholder={t('dashboard.customPlaceholder')}
+            inputMode="url"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={adding || bypassCheckingAll || customTargets.length >= MAX_CUSTOM_BYPASS_TARGETS}
+            className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 dark:border-slate-700/60 dark:bg-slate-800/60 dark:text-slate-100 dark:placeholder:text-slate-500"
+          />
+          <Btn
+            type="submit"
+            variant="secondary"
+            disabled={adding || bypassCheckingAll || customInput.trim() === '' || customTargets.length >= MAX_CUSTOM_BYPASS_TARGETS}
+          >
+            {adding ? <Spinner /> : t('lists.add')}
+          </Btn>
+        </form>
+        {customError ? <p className="mt-1 text-xs text-red-600 dark:text-red-400">{customError}</p> : null}
+        {customTargets.length >= MAX_CUSTOM_BYPASS_TARGETS ? (
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {t('dashboard.customLimit').replace('{max}', String(MAX_CUSTOM_BYPASS_TARGETS))}
+          </p>
+        ) : null}
+        {customTargets.length === 0 ? (
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('dashboard.customEmpty')}</p>
+        ) : (
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {customTargets.map((target) => {
+              const checking = bypassChecking[target.id] || bypassCheckingAll
+              const state: BypassUi = checking ? { status: 'checking' } : toBypassUi(bypass[target.id] ?? null)
+              return (
+                <Card
+                  key={target.id}
+                  onClose={() => void removeCustomTarget(target.id)}
+                  closeLabel={t('strategies.delete')}
+                >
+                  <div className="flex items-center gap-2">
+                    <GlobeIcon />
+                    <div className="min-w-0 flex-1 truncate text-sm font-semibold" title={target.name}>
+                      {target.name}
+                    </div>
+                    <BypassBadge state={state} />
+                  </div>
+                  <div
+                    className="mt-1 truncate font-mono text-[11px] text-slate-500 dark:text-slate-400"
+                    title={target.host}
+                  >
+                    {target.host}
+                  </div>
+                  <div className="mt-2 min-h-[20px] break-all text-xs text-slate-500 dark:text-slate-400">
+                    <BypassDetail state={state} />
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <Btn
+                      variant="secondary"
+                      onClick={() => void checkBypassOne(target.id)}
+                      disabled={checking || bypassCheckingAll}
+                    >
+                      {checking ? <Spinner /> : t('dashboard.bypassCheck')}
+                    </Btn>
+                    <a
+                      href={target.openUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg px-2.5 py-1.5 text-sm text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700/60"
+                    >
+                      {t('dashboard.bypassOpen')} <span aria-hidden className="text-xs opacity-60">↗</span>
+                    </a>
+                  </div>
+                </Card>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -676,6 +805,16 @@ function CloudIcon(): React.JSX.Element {
   return (
     <StrokeIcon>
       <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+    </StrokeIcon>
+  )
+}
+
+function GlobeIcon(): React.JSX.Element {
+  return (
+    <StrokeIcon>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M2 12h20" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" />
     </StrokeIcon>
   )
 }

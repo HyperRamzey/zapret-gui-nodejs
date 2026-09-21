@@ -6,8 +6,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
 import { getSettingsPath } from './paths'
-import type { AppSettings, AppTheme, TgProxySettings } from '../shared/types'
+import type { AppSettings, AppTheme, CustomBypassTarget, TgProxySettings } from '../shared/types'
 import { TG_PROXY_DEFAULT_HOST, TG_PROXY_DEFAULT_PORT } from '../shared/constants'
+import { normalizeCustomBypassTargets } from '../shared/bypass-custom'
 import {
   normalizeDcIpEntries,
   normalizeDomainEntries,
@@ -34,6 +35,7 @@ const BASE_DEFAULTS = {
   activeStrategyId: null,
   discordFake: null,
   gameFake: null,
+  customBypassTargets: [] as CustomBypassTarget[],
   tgProxy: {
     enabled: false,
     port: TG_PROXY_DEFAULT_PORT,
@@ -170,6 +172,7 @@ export function loadSettings(): AppSettings {
     if ((parsed as Record<string, unknown>).logsEnabled === false) merged.logsEnabled = false
     else if (typeof (parsed as Record<string, unknown>).logsEnabled !== 'boolean') merged.logsEnabled = true
     merged.tgProxy = normalizeTgProxySettings((parsed as Record<string, unknown>).tgProxy)
+    merged.customBypassTargets = normalizeCustomBypassTargets((parsed as Record<string, unknown>).customBypassTargets)
     // Backward compat: `trayTuningMenu` (one flag for both tuning submenus)
     // migrates to `trayGameFilterMenu` + `trayIPSetMenu`, each independently.
     // Explicit new flags always win over the legacy one.
@@ -236,6 +239,8 @@ export function saveSettings(patch: Partial<AppSettings>): AppSettings {
     patch = { ...patch, logsEnabled: true }
   }
   if (patch.tgProxy !== undefined) patch = { ...patch, tgProxy: normalizeTgProxySettings(patch.tgProxy) }
+  if (patch.customBypassTargets !== undefined)
+    patch = { ...patch, customBypassTargets: normalizeCustomBypassTargets(patch.customBypassTargets) }
   const next = { ...loadSettings(), ...patch }
   persistSettings(next)
   applyAutoLaunch(next.autoLaunch, next.startMinimizedToTray)

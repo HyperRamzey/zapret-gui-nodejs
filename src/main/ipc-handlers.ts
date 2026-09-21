@@ -45,7 +45,7 @@ import {
 } from './strategy-updater'
 import { getDataDir, getBinDir, getListsDir, getStrategiesDir, getUtilsDir, getBundledAssetsDir } from './paths'
 import { listUserLists, readUserList, writeUserList } from './user-lists'
-import { checkBypassTarget } from './bypass-check'
+import { checkBypassTarget, checkCustomBypassTarget } from './bypass-check'
 import { checkAppUpdates, downloadAppUpdate, getAppUpdateState, getAppVersion, installAppUpdate } from './app-updater'
 import type { BypassTargetId } from '../shared/types'
 import { loadSettings, normalizeTgProxySettings, saveSettings } from './settings'
@@ -520,6 +520,14 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.checkBypass, async (_e, id: BypassTargetId) => checkBypassTarget(id))
+
+  ipcMain.handle(IPC.checkBypassUrl, async (_e, payload: { id?: unknown; url?: unknown }) => {
+    // User-defined site check: the renderer passes its own id + URL
+    // (persisted in settings). Main re-validates both — a compromised
+    // renderer must not be able to force file:// or overlong inputs.
+    const p = (payload ?? {}) as { id?: unknown; url?: unknown }
+    return checkCustomBypassTarget(String(p.id ?? ''), String(p.url ?? ''))
+  })
 
   ipcMain.handle(IPC.clearDiscordCache, async () => {
     if (isLinux()) {

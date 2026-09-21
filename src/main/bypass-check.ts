@@ -6,7 +6,8 @@
  */
 import http from 'node:http'
 import https from 'node:https'
-import { BYPASS_TARGETS, BYPASS_CHECK_TIMEOUT_MS } from '../shared/constants'
+import { BYPASS_TARGETS, BYPASS_CHECK_TIMEOUT_MS, CUSTOM_BYPASS_ID_PREFIX } from '../shared/constants'
+import { normalizeCustomUrlInput } from '../shared/bypass-custom'
 import type { BypassCheckResult, BypassTargetId } from '../shared/types'
 
 export function getBypassTarget(id: BypassTargetId): (typeof BYPASS_TARGETS)[number] {
@@ -95,4 +96,24 @@ export async function checkBypassTarget(id: BypassTargetId, timeoutMs = BYPASS_C
   const target = getBypassTarget(id)
   const r = await checkBypassUrl(target.url, timeoutMs)
   return { id, ...r, checkedAt: new Date().toISOString() }
+}
+
+/**
+ * Check a user-defined URL (`custom-…` id). Validates the id/URL shape
+ * (throws → error banner) and never rejects on network errors.
+ */
+export async function checkCustomBypassTarget(
+  id: string,
+  urlStr: string,
+  timeoutMs = BYPASS_CHECK_TIMEOUT_MS
+): Promise<BypassCheckResult> {
+  const cleanId = String(id ?? '').slice(0, 64)
+  if (!cleanId.startsWith(CUSTOM_BYPASS_ID_PREFIX) || !/^[A-Za-z0-9-_]{1,64}$/.test(cleanId)) {
+    throw new Error(`Invalid custom target id: ${cleanId.slice(0, 64)}`)
+  }
+  const cleanUrl = String(urlStr ?? '').slice(0, 2048)
+  const norm = normalizeCustomUrlInput(cleanUrl)
+  if (!norm) throw new Error('Invalid custom URL: enter a valid domain or http(s) URL')
+  const r = await checkBypassUrl(norm.url, timeoutMs)
+  return { id: cleanId, ...r, checkedAt: new Date().toISOString() }
 }

@@ -292,6 +292,8 @@ export interface AppSettings {
   activeStrategyId: string | null
   discordFake: string | null
   gameFake: string | null
+  /** User-defined sites for the dashboard bypass check. */
+  customBypassTargets: CustomBypassTarget[]
   tgProxy: TgProxySettings
 }
 
@@ -308,9 +310,24 @@ export interface HostsCheckResult {
 /** Bypass-test target id shown on the dashboard. */
 export type BypassTargetId = 'youtube' | 'cloudflare' | 'discord'
 
+/** User-defined bypass target (stored in settings, checked like built-ins). */
+export interface CustomBypassTarget {
+  /** Stable id, `custom-` prefix + random suffix. */
+  id: string
+  /** Display name (derived from host). */
+  name: string
+  /** Full URL used for the check (GET, headers only). */
+  url: string
+  /** Host for the subtitle row (hostname + non-default port). */
+  host: string
+  /** URL opened by the "Open" link. */
+  openUrl: string
+}
+
 /** Result of a single bypass connectivity check (main process). */
 export interface BypassCheckResult {
-  id: BypassTargetId
+  /** Built-in id (`youtube`…) or custom id (`custom-…`). */
+  id: string
   ok: boolean
   /** Time until response headers, ms. */
   latencyMs: number
@@ -399,6 +416,7 @@ export const IPC = {
   updateEngine: 'zapret:update-engine',
   runDiagnostics: 'zapret:run-diagnostics',
   checkBypass: 'zapret:check-bypass',
+  checkBypassUrl: 'zapret:check-bypass-url',
   clearDiscordCache: 'zapret:clear-discord-cache',
   removeConflicts: 'zapret:remove-conflicts',
   configTesterStart: 'zapret:config-tester-start',
