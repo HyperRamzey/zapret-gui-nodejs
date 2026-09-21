@@ -13,6 +13,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { UserListMeta } from '../shared/types'
+import { MAX_USER_LIST_BYTES } from '../shared/constants'
 
 /** Files seeded on first run (see `paths.ensureDataDirSeeded`). */
 export const KNOWN_USER_LISTS = [
@@ -21,8 +22,8 @@ export const KNOWN_USER_LISTS = [
   'ipset-exclude-user.txt'
 ] as const
 
-/** Hard cap for a single user list (protects against accidental pastes). */
-export const MAX_USER_LIST_BYTES = 2 * 1024 * 1024
+/** Re-exported for existing import sites (single source of truth in shared). */
+export { MAX_USER_LIST_BYTES }
 
 /**
  * A file is user-editable when it is a plain `*-user.txt` name without
@@ -126,12 +127,14 @@ export function writeUserList(listsDir: string, name: string, content: string): 
   // line array plus a joined copy (~3x memory), so reject absurd payloads
   // before allocating. The post-normalize check below stays authoritative.
   if (Buffer.byteLength(raw, 'utf8') > MAX_USER_LIST_BYTES * 4) {
-    throw new Error(`List too large (max ${MAX_USER_LIST_BYTES} bytes)`)
+    throw new Error(`List too large (max ${(MAX_USER_LIST_BYTES / 1048576).toFixed(0)} MB)`)
   }
   const normalized = normalizeUserListContent(raw)
   const bytes = Buffer.byteLength(normalized, 'utf8')
   if (bytes > MAX_USER_LIST_BYTES) {
-    throw new Error(`List too large (${bytes} bytes, max ${MAX_USER_LIST_BYTES})`)
+    throw new Error(
+      `List too large (${(bytes / 1048576).toFixed(1)} MB, max ${(MAX_USER_LIST_BYTES / 1048576).toFixed(0)} MB)`
+    )
   }
   fs.mkdirSync(listsDir, { recursive: true })
   // Atomic write: readers never see a half-written list.

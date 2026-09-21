@@ -7,12 +7,32 @@ import type { AppPlatform, BypassCheckResult, DiagnosticCheck, ServiceState, Sta
 
 /* ---------- Lists.tsx ---------- */
 
+/**
+ * Count meaningful entries without splitting the whole file into an
+ * array (a 16 MB list is ~500k lines — `split()` per keystroke fans out
+ * tens of MB of transient strings). Single scan, O(n) time, O(1) memory.
+ */
 export function countListEntries(content: string): number {
   let n = 0
-  for (const line of content.split(/\r?\n/)) {
-    const t = line.trim()
-    if (t === '' || t.startsWith('#') || t.startsWith(';')) continue
-    n++
+  let lineStart = 0
+  const len = content.length
+  for (let i = 0; i <= len; i++) {
+    const ch = i < len ? content[i] : '\n'
+    if (ch !== '\n') continue
+    // Trim trailing \r (CRLF) + spaces/tabs without allocating per line.
+    let end = i
+    while (end > lineStart) {
+      const c = content[end - 1]
+      if (c === '\r' || c === ' ' || c === '\t') end--
+      else break
+    }
+    let start = lineStart
+    while (start < end && (content[start] === ' ' || content[start] === '\t')) start++
+    if (start < end) {
+      const first = content[start]
+      if (first !== '#' && first !== ';') n++
+    }
+    lineStart = i + 1
   }
   return n
 }
@@ -21,7 +41,9 @@ export function dedupListContent(content: string): string {
   if (content === '') return ''
   const seen = new Set<string>()
   const out: string[] = []
-  const rows = content.replace(/\r\n?/g, '\n').split('\n')
+  // One split, no pre-replace full-string copy. Same line semantics as
+  // countListEntries and main's countUserListEntries (`\n`, tolerating CRLF).
+  const rows = content.split(/\r?\n/)
   for (let i = 0; i < rows.length; i++) {
     const raw = rows[i]
     const t = raw.trim()
@@ -40,18 +62,26 @@ export function dedupListContent(content: string): string {
   return out.join('\n') + (out.length > 0 ? '\n' : '')
 }
 
+/**
+ * Sort entries (comments first, then unique case-insensitive sorted).
+ * Previously O(n²): `entries.find(e => e.toLowerCase() === lower)` per
+ * unique key re-scanned the whole file with a fresh lowercase allocation
+ * each time — on a 100k-line list that is ~10¹⁰ transient strings and
+ * gigabytes of RAM. Now a single Map pass, O(n log n) total. Pure.
+ */
 export function sortListContent(content: string): string {
   const comments: string[] = []
-  const entries: string[] = []
-  for (const raw of content.replace(/\r\n?/g, '\n').split('\n')) {
+  const firstSeen = new Map<string, string>()
+  for (const raw of content.split(/\r?\n/)) {
     const t = raw.trim()
     if (t === '') continue
     if (t.startsWith('#') || t.startsWith(';')) comments.push(raw)
-    else entries.push(t)
+    else {
+      const key = t.toLowerCase()
+      if (!firstSeen.has(key)) firstSeen.set(key, t)
+    }
   }
-  const uniq = [...new Set(entries.map((e) => e.toLowerCase())).keys()].map(
-    (lower) => entries.find((e) => e.toLowerCase() === lower) as string
-  )
+  const uniq = [...firstSeen.values()]
   uniq.sort((a, b) => a.localeCompare(b))
   const parts = [...comments, ...uniq]
   return parts.length > 0 ? parts.join('\n') + '\n' : ''
@@ -69,16 +99,26 @@ export function splitAddParts(raw: string): string[] {
 export function mergeAddEntries(content: string, addValue: string): string | null {
   const parts = splitAddParts(addValue)
   if (parts.length === 0) return null
-  const existing = new Set(
-    content
-      .split(/\r?\n/)
-      .map((l) => l.trim().toLowerCase())
-      .filter((l) => l !== '')
-  )
+  // Single pass over the file (no intermediate lowercased array of ~500k
+  // strings for a 16 MB list).
+  const existing = new Set<string>()
+  for (const line of content.split(/\r?\n/)) {
+    const t = line.trim().toLowerCase()
+    if (t !== '') existing.add(t)
+  }
   const fresh = parts.filter((p) => !existing.has(p.toLowerCase()))
   if (fresh.length === 0) return null
   const base = content.endsWith('\n') || content === '' ? content : content + '\n'
   return base + fresh.join('\n') + '\n'
+}
+
+/** Format list/file bytes for the Lists title (B/KB/MB, one decimal). Pure. */
+export function formatListBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  const mb = bytes / 1048576
+  if (mb >= 1) return `${mb.toFixed(1)} MB`
+  return `${(bytes / 1024).toFixed(1)} KB`
 }
 
 /* ---------- Settings.tsx ---------- */

@@ -219,6 +219,7 @@
   'lists.guideIpset': 'System list of IPs/subnets to bypass (Updates → Update IPSet)',
   'lists.guideIpsetExclude': 'IP/subnet exceptions — skip',
   'lists.guideNote': '*-user.txt files are created automatically on first run.',
+  'lists.tooLarge': 'List too large (max {max})',
   'tray.goto': 'Otvori odeljak',
   'tray.openData': 'Otvori fasciklu sa podacima',
   'tray.exportLogs': 'Izvezi evidencije',

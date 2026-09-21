@@ -10,8 +10,10 @@ import {
   normalizeUserListContent,
   listUserLists,
   readUserList,
-  writeUserList
+  writeUserList,
+  MAX_USER_LIST_BYTES
 } from '../src/main/user-lists'
+import { MAX_USER_LIST_BYTES as SHARED_MAX } from '../src/shared/constants'
 
 let dir: string
 
@@ -77,5 +79,21 @@ describe('list/read/write round-trip', () => {
   it('rejects invalid names on read/write', () => {
     expect(() => readUserList(dir, '../x.txt')).toThrow()
     expect(() => writeUserList(dir, 'list-general.txt', 'x')).toThrow()
+  })
+
+  it('cap is 16 MB and shared with the renderer pre-check', () => {
+    expect(MAX_USER_LIST_BYTES).toBe(16 * 1024 * 1024)
+    expect(SHARED_MAX).toBe(MAX_USER_LIST_BYTES)
+  })
+
+  it('writes a ~15 MB list and rejects one over 16 MB with an MB message', () => {
+    const okPayload = `${'a'.repeat(1024)}\n`.repeat(14000)
+    expect(Buffer.byteLength(okPayload, 'utf8')).toBeLessThan(MAX_USER_LIST_BYTES)
+    const meta = writeUserList(dir, 'list-general-user.txt', okPayload)
+    expect(meta.exists).toBe(true)
+    expect(meta.lines).toBe(14000)
+    expect(() => writeUserList(dir, 'list-general-user.txt', 'x'.repeat(MAX_USER_LIST_BYTES + 1024))).toThrow(
+      /max 16 MB/
+    )
   })
 })

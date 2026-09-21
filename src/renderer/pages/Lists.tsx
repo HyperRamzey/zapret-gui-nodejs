@@ -3,7 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useUi } from '../store'
 import { Badge, Btn, Card, Spinner } from '../components/ui'
 import type { UserListMeta } from '../../shared/types'
-import { countListEntries as countEntries, dedupListContent as dedupContent, mergeAddEntries, sortListContent as sortContent, splitAddParts, userListGuideKey } from '../lib/ui-logic'
+import { MAX_USER_LIST_BYTES } from '../../shared/constants'
+import { countListEntries as countEntries, dedupListContent as dedupContent, formatListBytes, mergeAddEntries, sortListContent as sortContent, splitAddParts, userListGuideKey } from '../lib/ui-logic'
 
 export default function Lists(): React.JSX.Element {
   const { t, setError } = useUi()
@@ -82,6 +83,17 @@ export default function Lists(): React.JSX.Element {
     if (!selected || saving) return
     const requestName = selected
     const requestContent = content
+    // Client-side pre-check: don't push tens of MB over IPC just to get
+    // rejected by main — show the localized hint immediately. Byte length
+    // is exact here (one encode, only on Save, not per keystroke).
+    try {
+      if (new TextEncoder().encode(requestContent).length > MAX_USER_LIST_BYTES) {
+        setError(t('lists.tooLarge').replace('{max}', formatListBytes(MAX_USER_LIST_BYTES)))
+        return
+      }
+    } catch {
+      /* TextEncoder unavailable — fall through to main-side check */
+    }
     setSaving(true)
     try {
       const updated = await window.zapret.saveUserList(requestName, requestContent)
@@ -167,7 +179,7 @@ export default function Lists(): React.JSX.Element {
 
       {selected ? (
         <Card
-          title={`${selected} · ${t('lists.entries').replace('{count}', String(meta?.lines ?? entries))}${
+          title={`${selected} · ${t('lists.entries').replace('{count}', String(meta?.lines ?? entries))} · ${formatListBytes(dirty ? content.length : (meta?.bytes ?? content.length))}${
             dirty ? ' · ●' : ''
           }`}
         >

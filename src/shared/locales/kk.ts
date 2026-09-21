@@ -219,6 +219,7 @@
   'lists.guideIpset': 'System list of IPs/subnets to bypass (Updates → Update IPSet)',
   'lists.guideIpsetExclude': 'IP/subnet exceptions — skip',
   'lists.guideNote': '*-user.txt files are created automatically on first run.',
+  'lists.tooLarge': 'List too large (max {max})',
   'tray.goto': 'Бөлімді ашу',
   'tray.openData': 'Деректер қалтасын ашу',
   'tray.exportLogs': 'Логтарды экспорттау',

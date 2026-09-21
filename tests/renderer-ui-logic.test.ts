@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import {
   countListEntries,
   dedupListContent,
+  formatListBytes,
   sortListContent,
   splitAddParts,
   mergeAddEntries,
@@ -183,5 +184,45 @@ describe('userListGuideKey', () => {
     expect(userListGuideKey('  LIST-GENERAL-USER.TXT ')).toBe('lists.guideGeneral')
     expect(userListGuideKey('other-user.txt')).toBeNull()
     expect(userListGuideKey('')).toBeNull()
+  })
+})
+
+describe('sortListContent (linear, no O(n²))', () => {
+  it('dedupes case-insensitively keeping first occurrence, comments first', () => {
+    const out = sortListContent('z.com\n# c\nB.com\nb.COM\na.com\n; s\n')
+    expect(out).toBe('# c\n; s\na.com\nB.com\nz.com\n')
+  })
+
+  it('handles CRLF like LF', () => {
+    expect(sortListContent('b.com\r\na.com\r\n')).toBe('a.com\nb.com\n')
+    expect(sortListContent('')).toBe('')
+  })
+
+  it('sorts 50k lines fast (regression: old impl was quadratic → GBs of RAM)', () => {
+    const lines: string[] = []
+    for (let i = 50000; i >= 1; i--) lines.push(`host${i}.example.com`)
+    const input = lines.join('\n') + '\n'
+    const started = Date.now()
+    const out = sortListContent(input)
+    expect(Date.now() - started).toBeLessThan(5000)
+    expect(countListEntries(out)).toBe(50000)
+    expect(out.startsWith('host1.example.com\n')).toBe(true)
+  }, 15000)
+})
+
+describe('countListEntries without split', () => {
+  it('counts CRLF and ignores comments', () => {
+    expect(countListEntries('a.com\r\n# c\r\n;b\nd.com\ne.com\n')).toBe(3)
+    expect(countListEntries('')).toBe(0)
+  })
+})
+
+describe('formatListBytes', () => {
+  it('formats B/KB/MB', () => {
+    expect(formatListBytes(0)).toBe('0 B')
+    expect(formatListBytes(512)).toBe('512 B')
+    expect(formatListBytes(2048)).toBe('2.0 KB')
+    expect(formatListBytes(16 * 1024 * 1024)).toBe('16.0 MB')
+    expect(formatListBytes(-1)).toBe('—')
   })
 })

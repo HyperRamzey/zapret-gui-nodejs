@@ -18,7 +18,8 @@ import {
   isValidUserListName,
   normalizeUserListContent,
   countUserListEntries,
-  writeUserList
+  writeUserList,
+  MAX_USER_LIST_BYTES
 } from '../src/main/user-lists'
 import { tokenizeCommandLine, quoteArg, parseBatContent } from '../src/main/strategy-parser'
 import { stopTgProxy, getTgProxyStatus } from '../src/main/tg-proxy'
@@ -125,7 +126,8 @@ describe('user-lists edges', () => {
 
   it('oversize content rejected', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-big-'))
-    const big = `a.com\n`.repeat(500000) // ~3MB > 2MB cap
+    // Just over the 16 MB cap (single huge line — bytes, not lines, matter).
+    const big = 'x'.repeat(MAX_USER_LIST_BYTES + 1024)
     expect(() => writeUserList(dir, 'list-exclude-user.txt', big)).toThrow(/too large|exceed/i)
   })
 })

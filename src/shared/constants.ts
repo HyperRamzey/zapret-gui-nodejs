@@ -111,6 +111,12 @@ export const BYPASS_CHECK_TIMEOUT_MS = 10000
 export const MAX_CUSTOM_BYPASS_TARGETS = 20
 /** Prefix for user-defined bypass target ids (`custom-<rand>`). */
 export const CUSTOM_BYPASS_ID_PREFIX = 'custom-'
+/**
+ * Hard cap for a single user list (protects the renderer textarea, the
+ * IPC payload and winws list reload from absurd pastes).
+ * 16 MB ≈ 500k domains — 8x the old 2 MB cap.
+ */
+export const MAX_USER_LIST_BYTES = 16 * 1024 * 1024
 
 /** Targets for the dashboard bypass test (lightweight endpoints). */
 export const BYPASS_TARGETS = [

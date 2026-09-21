@@ -263,6 +263,7 @@
   'lists.guideIpset': 'Системный список IP и подсетей для обхода (Обновления → Обновить IPSet)',
   'lists.guideIpsetExclude': 'IP и подсети-исключения — не обходить',
   'lists.guideNote': 'Файлы *-user.txt создаются автоматически при первом запуске.',
+  'lists.tooLarge': 'Файл слишком большой (макс {max})',
   'tray.goto': 'Открыть раздел',
   'tray.grantRoot': 'Предоставить root-права',
   'tray.openData': 'Открыть папку данных',

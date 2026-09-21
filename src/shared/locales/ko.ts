@@ -219,6 +219,7 @@
   'lists.guideIpset': 'System list of IPs/subnets to bypass (Updates → Update IPSet)',
   'lists.guideIpsetExclude': 'IP/subnet exceptions — skip',
   'lists.guideNote': '*-user.txt files are created automatically on first run.',
+  'lists.tooLarge': 'List too large (max {max})',
   'tray.goto': '섹션 열기',
   'tray.openData': '데이터 폴더 열기',
   'tray.exportLogs': '로그 내보내기',
