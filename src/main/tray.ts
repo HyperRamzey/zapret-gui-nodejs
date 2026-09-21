@@ -310,6 +310,7 @@ export function visibleStrategies(
   activeName: string | null,
   limit: number = TRAY_STRATEGY_LIMIT
 ): TrayStrategyItem[] {
+  if (!Number.isFinite(limit) || limit <= 0) return []
   const slice = strategies.slice(0, Math.max(0, limit))
   const hasActive =
     activeId != null

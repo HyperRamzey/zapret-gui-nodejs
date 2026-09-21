@@ -5,14 +5,7 @@ import { Badge, Btn, Card, ProgressBar, Spinner } from '../components/ui'
 import LogsSection from './Logs'
 import { formatDetail } from '../../shared/i18n'
 import type { DiagnosticCheck, Strategy } from '../../shared/types'
-
-function tone(level: DiagnosticCheck['level']): 'green' | 'yellow' | 'red' {
-  return level === 'ok' ? 'green' : level === 'warn' ? 'yellow' : 'red'
-}
-
-function icon(level: DiagnosticCheck['level']): string {
-  return level === 'ok' ? '✅' : level === 'warn' ? '⚠️' : '❌'
-}
+import { diagIcon as icon, diagTone as tone, splitStrategyName } from '../lib/ui-logic'
 
 export default function Diagnostics(): React.JSX.Element {
   const { t, setError, status, locale, platform } = useUi()
@@ -136,15 +129,7 @@ export default function Diagnostics(): React.JSX.Element {
   )
 }
 
-function splitStrategyName(name: string): { base: string; tag: string | null } {
-  const m = name.match(/^(.*?)\s*\(([^)]+)\)\s*$/)
-  if (!m) return { base: name, tag: null }
-  const base = m[1].trim()
-  if (!base) return { base: name, tag: null }
-  return { base, tag: m[2].trim() }
-}
-
-/** Colored count pill for the results table (zeros muted). */
+ /** Colored count pill for the results table (zeros muted). */
 function Num(props: { value: number; tone: 'green' | 'red' | 'amber' | 'slate' }): React.JSX.Element {
   const muted = props.value === 0
   const cls =

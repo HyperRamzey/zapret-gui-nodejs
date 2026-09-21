@@ -161,8 +161,8 @@ function buildTgProxyLink(settings: TgProxySettings, bound: { host: string; port
   return buildTgLink(host, bound?.port ?? settings.port, settings.secret, settings.fakeTlsDomain)
 }
 
-/** Strict validators for explicitly-provided setting values (throw → error banner). */
-function validateTgHost(value: unknown): string {
+/** Strict validators for explicitly-provided setting values (throw → error banner). Pure — exported for unit tests. */
+export function validateTgHost(value: unknown): string {
   const fallback = TG_PROXY_DEFAULT_HOST
   const s = normalizeTgHost(value, fallback)
   if (typeof value !== 'string' || s === fallback && value.trim() !== fallback) {
@@ -171,7 +171,7 @@ function validateTgHost(value: unknown): string {
   return s
 }
 
-function validateDcIpEntries(value: unknown): string[] {
+export function validateDcIpEntries(value: unknown): string[] {
   const entries = parseDomainList(value)
   if (entries.length === 0) return []
   // Throws on the first malformed entry (message lists the culprit).
@@ -179,26 +179,26 @@ function validateDcIpEntries(value: unknown): string[] {
   return Object.entries(merged).map(([dc, ip]) => `${dc}:${ip}`)
 }
 
-function validatePoolSize(value: unknown): number {
+export function validatePoolSize(value: unknown): number {
   const n = typeof value === 'number' ? Math.floor(value) : Number.parseInt(String(value ?? ''), 10)
   if (!Number.isFinite(n) || n < 0 || n > 32) throw new Error(`Invalid TG proxy pool size (0–32): ${String(value).slice(0, 20)}`)
   return n
 }
 
-function validateBufferKb(value: unknown): number {
+export function validateBufferKb(value: unknown): number {
   const n = typeof value === 'number' ? Math.floor(value) : Number.parseInt(String(value ?? ''), 10)
   if (!Number.isFinite(n) || n < 4 || n > 4096) throw new Error(`Invalid TG proxy buffer (4–4096 KB): ${String(value).slice(0, 20)}`)
   return n
 }
 
-function validateDomainEntries(value: unknown, what: string): string[] {
+export function validateDomainEntries(value: unknown, what: string): string[] {
   const entries = parseDomainList(value)
   const bad = entries.filter((d) => !isValidDomain(d))
   if (bad.length > 0) throw new Error(`Invalid ${what}: ${bad[0].slice(0, 80)}`)
   return normalizeDomainEntries(entries)
 }
 
-function validateFakeTlsDomain(value: unknown): string {
+export function validateFakeTlsDomain(value: unknown): string {
   const s = typeof value === 'string' ? value.trim().toLowerCase() : ''
   if (s === '') return ''
   if (!isValidDomain(s)) throw new Error(`Invalid FakeTLS domain: ${s.slice(0, 80)}`)
@@ -864,7 +864,7 @@ export function registerIpcHandlers(): void {
 }
 
 /** Coerce an unknown renderer value to a valid log category (fallback `all`). Pure. */
-function normalizeLogCategory(value: unknown): LogCategory {
+export function normalizeLogCategory(value: unknown): LogCategory {
   return value === 'zapret' || value === 'tg-proxy' || value === 'app' ? value : 'all'
 }
 

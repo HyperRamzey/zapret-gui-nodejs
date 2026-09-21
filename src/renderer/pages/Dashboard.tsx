@@ -3,46 +3,8 @@ import React, { useEffect, useState } from 'react'
 import { bypassStrategyKeyOf, useUi } from '../store'
 import { Badge, Btn, Card, Code, Dot, Row, Spinner } from '../components/ui'
 import { BYPASS_TARGETS } from '../../shared/constants'
-import type { BypassCheckResult, BypassTargetId, ServiceState } from '../../shared/types'
-
-function stateTone(s: ServiceState): 'green' | 'red' | 'gray' | 'yellow' {
-  if (s === 'RUNNING') return 'green'
-  if (s === 'STOPPED' || s === 'NOT_INSTALLED') return 'red'
-  if (s === 'START_PENDING' || s === 'STOP_PENDING') return 'yellow'
-  return 'gray'
-}
-
-function stateKey(s: ServiceState): 'running' | 'stopped' | 'not-installed' | 'unknown' {
-  if (s === 'RUNNING') return 'running'
-  if (s === 'STOPPED') return 'stopped'
-  if (s === 'NOT_INSTALLED') return 'not-installed'
-  return 'unknown'
-}
-
-/** First token of a service ImagePath (`"C:\...\winws.exe" --args` → `"C:\...\winws.exe"`). */
-function shortExePath(full: string): string {
-  const s = full.trim()
-  if (s === '' || s === '—') return s
-  if (s.startsWith('"')) {
-    const end = s.indexOf('"', 1)
-    if (end > 1) return s.slice(0, end + 1)
-  }
-  return s.split(/\s+/)[0] ?? s
-}
-
-type BypassUi =
-  | { status: 'idle' }
-  | { status: 'checking' }
-  | { status: 'ok'; latencyMs: number; httpStatus: number | null }
-  | { status: 'fail'; latencyMs?: number; httpStatus?: number | null; error?: string | null }
-
-/** Map a cached check result to UI state (null = never checked). */
-function toBypassUi(r: BypassCheckResult | null): BypassUi {
-  if (!r) return { status: 'idle' }
-  return r.ok
-    ? { status: 'ok', latencyMs: r.latencyMs, httpStatus: r.httpStatus }
-    : { status: 'fail', latencyMs: r.latencyMs, httpStatus: r.httpStatus, error: r.error }
-}
+import type { BypassTargetId, ServiceState } from '../../shared/types'
+import { shortExePath, stateKey, stateTone, toBypassUi, type BypassUi } from '../lib/ui-logic'
 
 function BypassTest(): React.JSX.Element {
   const { t, status, settings, bypass, bypassChecking, bypassCheckingAll, bypassStrategyKey, checkBypassOne, checkBypassAll } =

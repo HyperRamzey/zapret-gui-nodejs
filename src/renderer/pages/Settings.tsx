@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react'
 import { useUi } from '../store'
 import { Btn, Card, Row, Spinner } from '../components/ui'
+import { isZapretActiveForReset, parsePortDraft, shouldCommitDraft, splitEntries } from '../lib/ui-logic'
 
 export default function Settings(): React.JSX.Element {
   const { t, settings, status, platform, applySettings, busy, resetAll, refreshStatus, tgProxySettings, updateTgProxySettings, resetTgProxySettings, settingsHighlight, setSettingsHighlight } =
@@ -35,11 +36,7 @@ export default function Settings(): React.JSX.Element {
   // stale/foreign daemon) and the user cannot stop it anyway (actions need
   // root) — blocking reset on it would deadlock the UI. resetAppData still
   // stops services best-effort (one prompt) and always resets files.
-  const zapretActive =
-    status?.zapret === 'RUNNING' ||
-    status?.zapret === 'START_PENDING' ||
-    status?.zapret === 'STOP_PENDING' ||
-    (status?.winwsRunning === true && (platform !== 'linux' || status?.isAdmin === true))
+  const zapretActive = isZapretActiveForReset(status, platform)
   const resetDisabled = resetting || zapretActive
 
   async function onReset(): Promise<void> {
@@ -69,21 +66,28 @@ export default function Settings(): React.JSX.Element {
 
   function commitDraft(key: string, current: string, commit: (raw: string) => void): void {
     const raw = drafts[key]
-    if (raw === undefined) return
+    if (!shouldCommitDraft(raw, current)) {
+      if (raw !== undefined) {
+        setDrafts((d) => {
+          const next = { ...d }
+          delete next[key]
+          return next
+        })
+      }
+      return
+    }
     setDrafts((d) => {
       const next = { ...d }
       delete next[key]
       return next
     })
-    if (raw === current) return
-    commit(raw)
+    commit(raw as string)
   }
 
   function commitPort(): void {
-    if (portDraft === null) return
-    const n = Number.parseInt(portDraft, 10)
+    const n = parsePortDraft(portDraft, tgPort)
     setPortDraft(null)
-    if (!Number.isFinite(n) || n < 1 || n > 65535 || n === tgPort) return
+    if (n === null) return
     void updateTgProxySettings({ port: n })
   }
 
@@ -305,15 +309,6 @@ export default function Settings(): React.JSX.Element {
       </div>
     )
   }
-
-/** Split free-form list input (commas/semicolons/spaces/newlines) into entries. */
-function splitEntries(raw: string): string[] {
-  return raw
-    .replace(/[,;\n\r\t]+/g, ' ')
-    .split(' ')
-    .map((s) => s.trim())
-    .filter((s) => s !== '')
-}
 
 /** Text/number input committed on blur/Enter (draft lives in the parent). */
 function CommitInput(props: {

@@ -3,50 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useUi } from '../store'
 import { Badge, Btn, Card, Spinner } from '../components/ui'
 import type { UserListMeta } from '../../shared/types'
-
-function countEntries(content: string): number {
-  let n = 0
-  for (const line of content.split(/\r?\n/)) {
-    const t = line.trim()
-    if (t === '' || t.startsWith('#') || t.startsWith(';')) continue
-    n++
-  }
-  return n
-}
-
-function dedupContent(content: string): string {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const raw of content.replace(/\r\n?/g, '\n').split('\n')) {
-    const t = raw.trim()
-    if (t === '' || t.startsWith('#') || t.startsWith(';')) {
-      out.push(raw)
-      continue
-    }
-    const key = t.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(t)
-  }
-  return out.join('\n') + (out.length > 0 ? '\n' : '')
-}
-
-function sortContent(content: string): string {
-  const comments: string[] = []
-  const entries: string[] = []
-  for (const raw of content.replace(/\r\n?/g, '\n').split('\n')) {
-    const t = raw.trim()
-    if (t === '') continue
-    if (t.startsWith('#') || t.startsWith(';')) comments.push(raw)
-    else entries.push(t)
-  }
-  const uniq = [...new Set(entries.map((e) => e.toLowerCase())).keys()].map(
-    (lower) => entries.find((e) => e.toLowerCase() === lower) as string
-  )
-  uniq.sort((a, b) => a.localeCompare(b))
-  const parts = [...comments, ...uniq]
-  return parts.length > 0 ? parts.join('\n') + '\n' : ''
-}
+import { countListEntries as countEntries, dedupListContent as dedupContent, mergeAddEntries, sortListContent as sortContent, splitAddParts } from '../lib/ui-logic'
 
 export default function Lists(): React.JSX.Element {
   const { t, setError } = useUi()
@@ -140,24 +97,13 @@ export default function Lists(): React.JSX.Element {
   }
 
   function addEntries(): void {
-    const parts = addValue
-      .split(/[\s,;]+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-    if (parts.length === 0) return
-    const existing = new Set(
-      content
-        .split(/\r?\n/)
-        .map((l) => l.trim().toLowerCase())
-        .filter((l) => l !== '')
-    )
-    const fresh = parts.filter((p) => !existing.has(p.toLowerCase()))
-    if (fresh.length === 0) {
+    if (splitAddParts(addValue).length === 0) return
+    const merged = mergeAddEntries(content, addValue)
+    if (merged === null) {
       setAddValue('')
       return
     }
-    const base = content.endsWith('\n') || content === '' ? content : content + '\n'
-    setContent(base + fresh.join('\n') + '\n')
+    setContent(merged)
     setAddValue('')
   }
 

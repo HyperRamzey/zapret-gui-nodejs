@@ -4,14 +4,7 @@ import { useUi } from '../store'
 import { Badge, Btn, Card, Code, Row, Spinner } from '../components/ui'
 import type { GameFilterMode, IPSetMode, Strategy } from '../../shared/types'
 import type { I18nKey } from '../../shared/i18n'
-
-function splitName(name: string): { base: string; tag: string | null } {
-  const m = name.match(/^(.*?)\s*\(([^)]+)\)\s*$/)
-  if (!m) return { base: name, tag: null }
-  const base = m[1].trim()
-  if (!base) return { base: name, tag: null }
-  return { base, tag: m[2].trim() }
-}
+import { splitStrategyName as splitName } from '../lib/ui-logic'
 
 export default function Strategies(): React.JSX.Element {
   const { t, strategies, refreshStrategies, busy, setError, status, settings, applySettings } = useUi()
