@@ -264,6 +264,8 @@
   'lists.guideIpsetExclude': 'IP и подсети-исключения — не обходить',
   'lists.guideNote': 'Файлы *-user.txt создаются автоматически при первом запуске.',
   'lists.tooLarge': 'Файл слишком большой (макс {max})',
+  'lists.kindDomains': 'домены',
+  'lists.kindIpset': 'IP/CIDR',
   'tray.goto': 'Открыть раздел',
   'tray.grantRoot': 'Предоставить root-права',
   'tray.openData': 'Открыть папку данных',

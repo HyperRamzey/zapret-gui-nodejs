@@ -185,7 +185,7 @@ export default function Lists(): React.JSX.Element {
         >
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <Badge tone={meta?.kind === 'ipset' ? 'blue' : 'gray'}>
-              {meta?.kind === 'ipset' ? 'IP/CIDR' : 'domains'}
+              {meta?.kind === 'ipset' ? t('lists.kindIpset') : t('lists.kindDomains')}
             </Badge>
             {savedAt ? (
               <span className="text-xs text-emerald-600 dark:text-emerald-300">

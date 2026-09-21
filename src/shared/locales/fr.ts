@@ -220,6 +220,8 @@
   'lists.guideIpsetExclude': 'IP/subnet exceptions — skip',
   'lists.guideNote': '*-user.txt files are created automatically on first run.',
   'lists.tooLarge': 'List too large (max {max})',
+  'lists.kindDomains': 'domains',
+  'lists.kindIpset': 'IP/CIDR',
   'tray.goto': 'Ouvrir la section',
   'tray.openData': 'Ouvrir le dossier de données',
   'tray.exportLogs': 'Exporter les journaux',

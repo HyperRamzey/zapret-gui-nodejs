@@ -264,6 +264,8 @@
   'lists.guideIpsetExclude': 'IP/subnet exceptions — skip',
   'lists.guideNote': '*-user.txt files are created automatically on first run.',
   'lists.tooLarge': 'List too large (max {max})',
+  'lists.kindDomains': 'domains',
+  'lists.kindIpset': 'IP/CIDR',
   'tray.goto': 'Go to',
   'tray.grantRoot': 'Grant root privileges',
   'tray.openData': 'Open data folder',
