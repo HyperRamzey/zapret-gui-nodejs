@@ -18,15 +18,25 @@ vi.mock('../src/main/service-manager', async (importOriginal) => {
   return { ...mod, removeServices: vi.fn() }
 })
 
+vi.mock('../src/main/linux-service', async (importOriginal) => {
+  const mod = (await importOriginal()) as Record<string, unknown>
+  return { ...mod, removeLinuxServices: vi.fn() }
+})
+
 import { removeServices } from '../src/main/service-manager'
+import { removeLinuxServices } from '../src/main/linux-service'
 import { resetAppData } from '../src/main/app-reset'
 import { getDataDir, getAppLogPath, getTgProxyLogPath } from '../src/main/paths'
+import { isLinux } from '../src/main/platform'
 
 const mockRemove = vi.mocked(removeServices)
+const mockRemoveLinux = vi.mocked(removeLinuxServices)
 
 beforeEach(() => {
   mockRemove.mockReset()
   mockRemove.mockResolvedValue(undefined)
+  mockRemoveLinux.mockReset()
+  mockRemoveLinux.mockResolvedValue(undefined)
   // start each case from a seeded state with a sentinel file
   resetAppDataSilentCleanup()
 })
@@ -50,11 +60,14 @@ describe('resetAppData', () => {
     expect(fs.existsSync(getAppLogPath())).toBe(false)
     expect(fs.existsSync(getTgProxyLogPath())).toBe(false)
     expect(said.some((s) => s.includes('reseeded') || s.includes('Settings reset'))).toBe(true)
-    expect(mockRemove).toHaveBeenCalledOnce()
+    // Platform-specific removal path: Windows -> removeServices, Linux -> removeLinuxServices.
+    if (isLinux()) expect(mockRemoveLinux).toHaveBeenCalledOnce()
+    else expect(mockRemove).toHaveBeenCalledOnce()
   })
 
   it('servicesRemoved=false when service removal throws, files still reset', async () => {
     mockRemove.mockRejectedValueOnce(new Error('Access denied (SCM)'))
+    mockRemoveLinux.mockRejectedValueOnce(new Error('pkexec denied'))
     // plant a custom file that must disappear after reset
     const { ensureDataDirSeeded } = await import('../src/main/paths')
     ensureDataDirSeeded()

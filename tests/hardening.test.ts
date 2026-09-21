@@ -65,7 +65,9 @@ describe('service-manager edges', () => {
 
   it('ensureListFilesExist rejects outside-dir refs', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-outside-'))
-    expect(() => ensureListFilesExist(dir, ['--hostlist=..\\evil.txt'] as never)).toThrow(/outside/i)
+    // Forward slash: path separator on both Windows and Linux (backslash is
+    // a valid filename char on Linux, so '..\\evil' would stay inside).
+    expect(() => ensureListFilesExist(dir, ['--hostlist=../evil.txt'] as never)).toThrow(/outside/i)
   })
 })
 
