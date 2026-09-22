@@ -53,6 +53,7 @@ import { resetAppData } from './app-reset'
 import { translate } from '../shared/i18n'
 import { clearBufferedLogs, getBufferedLogs, info, warn, err } from './logger'
 import { isAdmin, relaunchAppAsAdmin, spawnLong, killPidTree } from './exec'
+import { isAllowedTgProxyLink } from './shell-security'
 import { WINWS_EXE } from '../shared/constants'
 import { isLinux } from './platform'
 import { hasRootPrivilege, ensureRootPrivilege, runPrivileged, spawnPrivileged } from './linux-privilege'
@@ -714,8 +715,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.tgProxyOpenLink, async () => {    // The link is built here from our own settings — the renderer never
     // passes a URL, so a compromised renderer cannot open arbitrary schemes.
+    // The `tg://proxy` shape is still asserted before handing it to the OS.
     const settings = ensureTgProxySecret()
     const link = buildTgProxyLink(settings.tgProxy, null)
+    if (!isAllowedTgProxyLink(link)) throw new Error('Refusing to open an invalid TG proxy link')
     await shell.openExternal(link)
     sendLog('tg-proxy', 'info', 'TG proxy link opened in Telegram.')
     return true

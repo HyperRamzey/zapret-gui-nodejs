@@ -33,6 +33,7 @@ import {
   installLinuxStrategy
 } from './linux-service'
 import { TG_PROXY_RESTART_ARG, ADMIN_RELAUNCH_ARG, isAdminHandoverArgv } from '../shared/constants'
+import { isAllowedExternalUrl, isAllowedNavigationTarget } from './shell-security'
 import { IPC } from '../shared/types'
 import { translate } from '../shared/i18n'
 import type { GameFilterMode, IPSetMode, TrayPage, ZapretStatus } from '../shared/types'
@@ -641,8 +642,16 @@ function createWindow(): void {
     icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true
+      // Renderer hardening: the preload bridge (`contextBridge` +
+      // `ipcRenderer` only) works fully sandboxed, so keep every
+      // isolation layer on — a renderer compromise must not gain Node.
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      experimentalFeatures: false,
+      webviewTag: false
     }
   })
 
@@ -679,9 +688,36 @@ function createWindow(): void {
     void refreshTray()
   })
 
+  // External links (`target="_blank"` in the renderer) open in the user's
+  // browser — the window itself never navigates away from the app. Only
+  // `http(s)` may leave the app: any other scheme (`file:`, `javascript:`,
+  // `data:`, custom handlers, …) is denied so renderer content cannot turn
+  // this into an arbitrary-scheme launcher.
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    void shell.openExternal(details.url)
+    if (isAllowedExternalUrl(details.url)) {
+      void shell.openExternal(details.url).catch(() => undefined)
+    } else {
+      warn('app', `Blocked window.open for disallowed URL scheme: ${String(details.url).slice(0, 120)}`)
+    }
     return { action: 'deny' }
+  })
+
+  // Belt-and-suspenders for the same threat: in-app navigation stays local
+  // (file:// bundle, Vite dev server in dev). A top-level navigation to
+  // http(s) or any other scheme is cancelled — external pages belong in
+  // the browser, not in our privileged window.
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (!isAllowedNavigationTarget(navigationUrl, process.env['ELECTRON_RENDERER_URL'] ?? '')) {
+      event.preventDefault()
+      warn('app', `Blocked navigation to: ${String(navigationUrl).slice(0, 160)}`)
+    }
+  })
+
+  // No `<webview>` is used anywhere — refuse to attach one if renderer
+  // content ever requests it.
+  mainWindow.webContents.on('will-attach-webview', (event) => {
+    event.preventDefault()
+    warn('app', 'Blocked webview attach (webviews are not used by the app).')
   })
 
   // Stream buffered + future logs to the renderer (subscribed once globally).
