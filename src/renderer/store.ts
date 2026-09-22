@@ -75,6 +75,21 @@ export function syncThemeClass(theme: AppTheme): void {
 interface UiState {
   page: Page
   setPage: (p: Page) => void
+  /**
+   * Navigation guard message (ready-to-display text). While set, `setPage`
+   * to any *other* tab is refused and the message lands in `error` instead
+   * (e.g. Strategies blocks leaving until the previewed strategy is
+   * confirmed with "Select"). Null = free navigation.
+   */
+  navGuard: string | null
+  setNavGuard: (msg: string | null) => void
+  /**
+   * Bumped every time `setPage` refuses to leave a guarded tab. Strategies
+   * watches it to scroll the "Select" button into view and flash it —
+   * the block must be unmissable on the very first attempt, not only via
+   * the (dismissible) error banner.
+   */
+  selectAttention: number
   platform: AppPlatform
   refreshPlatform: () => Promise<void>
   grantRoot: () => Promise<boolean>
@@ -157,12 +172,18 @@ interface UiState {
 }
 
 async function call<T>(key: string, fn: () => Promise<T>, set: (p: Partial<UiState>) => void, get: () => UiState): Promise<T | null> {
+  // Snapshot the banner before the flight: a success clears a *stale*
+  // failure, but must not swallow a *newer* message that appeared meanwhile
+  // (e.g. a navigation-guard notice set while a background refresh was in
+  // flight — otherwise the banner vanishes on the very first blocked click
+  // and only the second attempt is ever seen).
+  const prevError = get().error
   get().setBusy(key, true)
   try {
     const result = await fn()
     // A success clears the previous failure — otherwise the red banner
     // from an old error hangs around until manually dismissed.
-    set({ error: null })
+    if (get().error === prevError) set({ error: null })
     return result
   } catch (e) {
     set({ error: e instanceof Error ? e.message : String(e) })
@@ -174,7 +195,20 @@ async function call<T>(key: string, fn: () => Promise<T>, set: (p: Partial<UiSta
 
 export const useUi = create<UiState>((set, get) => ({
   page: 'dashboard',
-  setPage: (page) => set({ page }),
+  setPage: (page) => {
+    const s = get()
+    // A page holding unconfirmed input (strategy preview) keeps the user
+    // until they confirm or revert — silently dropping the preview would
+    // lose their selection context. Same-tab clicks stay allowed.
+    if (s.navGuard && page !== s.page) {
+      set((prev) => ({ error: s.navGuard, selectAttention: prev.selectAttention + 1 }))
+      return
+    }
+    set({ page })
+  },
+  navGuard: null,
+  setNavGuard: (navGuard) => set({ navGuard }),
+  selectAttention: 0,
   platform: 'win32',
   refreshPlatform: async () => {
     try {
@@ -185,10 +219,12 @@ export const useUi = create<UiState>((set, get) => ({
     }
   },
   grantRoot: async () => {
+    const prevError = get().error
     try {
       get().setBusy('root', true)
       await window.zapret.ensureRoot()
-      set({ error: null })
+      // Same guard as call(): never wipe a newer banner (see above).
+      if (get().error === prevError) set({ error: null })
       await get().refreshStatus()
       return true
     } catch (e) {
@@ -579,6 +615,8 @@ export const useUi = create<UiState>((set, get) => ({
         locale: r.settings.locale,
         theme: r.settings.theme,
         error: null,
+        navGuard: null,
+        selectAttention: 0,
         // Cached results belong to the wiped state (strategy, ipset, lists).
         bypass: { youtube: null, cloudflare: null, discord: null },
         bypassStrategyKey: null,

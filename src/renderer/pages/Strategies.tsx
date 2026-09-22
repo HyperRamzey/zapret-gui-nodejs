@@ -7,11 +7,17 @@ import type { I18nKey } from '../../shared/i18n'
 import { splitStrategyName as splitName } from '../lib/ui-logic'
 
 export default function Strategies(): React.JSX.Element {
-  const { t, strategies, refreshStrategies, busy, setError, status, settings, applySettings } = useUi()
+  const { t, strategies, refreshStrategies, busy, setError, status, settings, applySettings, setNavGuard, selectAttention } = useUi()
   const [selected, setSelected] = useState<string>('')
   const [testing, setTesting] = useState<string | null>(null)
   const [testOut, setTestOut] = useState<string>('')
   const [query, setQuery] = useState<string>('')
+  // True once the user clicks a row (auto-preview on mount does not count):
+  // leaving the tab is blocked until the preview is confirmed with "Select".
+  const [touched, setTouched] = useState<boolean>(false)
+  // Flash highlight on the "Select" button after a blocked tab switch.
+  const [selectFlash, setSelectFlash] = useState<boolean>(false)
+  const selectWrapRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
     if (!selected) {
@@ -47,6 +53,41 @@ export default function Strategies(): React.JSX.Element {
   const pending = chosen !== null && chosen.id !== installedId
   const isInstalled = (s: Strategy): boolean => s.id === installedId
   const isChosen = (s: Strategy): boolean => s.id === chosenId
+
+  /** Preview a row without confirming: navigation stays locked until "Select". */
+  function preview(id: string): void {
+    setSelected(id)
+    setTouched(true)
+  }
+
+  // Block leaving the tab while a freshly picked strategy is not confirmed
+  // with "Select" — otherwise the preview silently stays behind and the user
+  // loses track of what they were about to apply.
+  const previewName = current?.name ?? ''
+  useEffect(() => {
+    if (touched && selected !== '' && selected !== chosenId && previewName !== '') {
+      setNavGuard(t('strategies.pendingText').replace('{chosen}', previewName))
+    } else {
+      setNavGuard(null)
+    }
+    return () => setNavGuard(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [touched, selected, chosenId, previewName])
+
+  // A blocked tab switch bumps `selectAttention`: pull the "Select" button
+  // into view and flash it so the required action is unmissable even when
+  // the error banner was already dismissed.
+  useEffect(() => {
+    if (selectAttention === 0) return
+    try {
+      selectWrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    } catch {
+      /* jsdom / no layout — highlight still applies */
+    }
+    setSelectFlash(true)
+    const timer = setTimeout(() => setSelectFlash(false), 2400)
+    return () => clearTimeout(timer)
+  }, [selectAttention])
 
   useEffect(() => {
     if (flatIds.length === 0) {
@@ -85,7 +126,7 @@ export default function Strategies(): React.JSX.Element {
     } else if (e.key === 'Enter') {
       if (highlightedId) {
         e.preventDefault()
-        setSelected(highlightedId)
+        preview(highlightedId)
       }
     }
   }
@@ -106,7 +147,7 @@ export default function Strategies(): React.JSX.Element {
         role="option"
         aria-selected={sel}
         title={s.name}
-        onClick={() => setSelected(s.id)}
+        onClick={() => preview(s.id)}
         onDoubleClick={() => void select(s.id)}
         onMouseEnter={() => setHighlightedId(s.id)}
         onFocus={() => setHighlightedId(s.id)}
@@ -200,6 +241,8 @@ export default function Strategies(): React.JSX.Element {
     try {
       await applySettings({ activeStrategyId: target.id })
       setSelected(target.id)
+      // Confirmed — the preview is now the choice, navigation unlocks.
+      setTouched(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -244,6 +287,7 @@ export default function Strategies(): React.JSX.Element {
       await window.zapret.deleteStrategy(current.id)
       await refreshStrategies()
       setSelected('')
+      setTouched(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -388,9 +432,17 @@ export default function Strategies(): React.JSX.Element {
             </div>
           ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
-            <Btn onClick={() => void select()} disabled={isChosen(current)}>
-              {t('action.select')}
-            </Btn>
+            <span
+              ref={selectWrapRef}
+              className={[
+                'inline-flex scroll-mt-4 rounded-lg transition-shadow',
+                selectFlash ? 'animate-pulse shadow-[0_0_0_3px_rgba(245,158,11,0.9)]' : 'shadow-none'
+              ].join(' ')}
+            >
+              <Btn onClick={() => void select()} disabled={isChosen(current)}>
+                {t('action.select')}
+              </Btn>
+            </span>
             <Btn variant="secondary" onClick={() => void toggleTest()} disabled={!status?.isAdmin}>
               {testing ? t('strategies.testStop') : t('action.test')}
             </Btn>
