@@ -706,8 +706,12 @@ function createWindow(): void {
   // (file:// bundle, Vite dev server in dev). A top-level navigation to
   // http(s) or any other scheme is cancelled — external pages belong in
   // the browser, not in our privileged window.
+  // SECURITY (M1): the dev-server origin is trusted only in dev. A packaged
+  // build must never honor ELECTRON_RENDERER_URL here — otherwise a local env
+  // var would whitelist an attacker-controlled origin inside this window.
+  const trustedDevServerUrl = !app.isPackaged ? (process.env['ELECTRON_RENDERER_URL'] ?? '') : ''
   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
-    if (!isAllowedNavigationTarget(navigationUrl, process.env['ELECTRON_RENDERER_URL'] ?? '')) {
+    if (!isAllowedNavigationTarget(navigationUrl, trustedDevServerUrl)) {
       event.preventDefault()
       warn('app', `Blocked navigation to: ${String(navigationUrl).slice(0, 160)}`)
     }
@@ -723,8 +727,22 @@ function createWindow(): void {
   // Stream buffered + future logs to the renderer (subscribed once globally).
   armLogForwarding()
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    const devUrl = process.env['ELECTRON_RENDERER_URL']
+  // SECURITY (M1): a packaged build must never load renderer content from
+  // ELECTRON_RENDERER_URL. That env var is trivially settable by any local
+  // process, and the renderer owns the full privileged preload bridge
+  // (~50 invoke handlers: install/start/applyHosts/relaunchAsAdmin/...), so
+  // a remote URL here turns into local SYSTEM/admin code execution.
+  // DevTools likewise open only for a validated local dev server, never
+  // in packaged builds.
+  const rawDevUrl = !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined
+  if (app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    warn('app', 'Ignoring ELECTRON_RENDERER_URL in packaged build (possible renderer-substitution attempt).')
+  }
+  const devUrl = isLocalDevServerUrl(rawDevUrl) ? (rawDevUrl as string) : undefined
+  if (rawDevUrl && !devUrl) {
+    warn('app', `Ignoring invalid ELECTRON_RENDERER_URL (expected local http dev server): ${String(rawDevUrl).slice(0, 120)}`)
+  }
+  if (devUrl) {
     // Vite may need a second to start; Electron otherwise shows a white
     // screen with ERR_CONNECTION_REFUSED and never retries.
     const loadWithRetry = (attempt = 0): void => {
@@ -743,6 +761,23 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
+}
+
+/**
+ * True for a local Vite dev-server URL (`http://127.0.0.1:5174`-like).
+ * Module-private pure helper (kept next to its only call site).
+ */
+function isLocalDevServerUrl(raw: unknown): boolean {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 2048) return false
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'http:') return false
+  if (parsed.username !== '' || parsed.password !== '') return false
+  return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '::1'
 }
 
 

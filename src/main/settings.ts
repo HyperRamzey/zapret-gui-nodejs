@@ -233,19 +233,91 @@ export function normalizeTgProxySettings(value: unknown): TgProxySettings {
 }
 
 export function saveSettings(patch: Partial<AppSettings>): AppSettings {
-  if (patch.locale !== undefined) patch = { ...patch, locale: normalizeLocale(patch.locale) }
-  if (patch.theme !== undefined) patch = { ...patch, theme: normalizeTheme(patch.theme) }
-  if (patch.logsEnabled !== undefined && typeof patch.logsEnabled !== 'boolean') {
-    patch = { ...patch, logsEnabled: true }
-  }
-  if (patch.tgProxy !== undefined) patch = { ...patch, tgProxy: normalizeTgProxySettings(patch.tgProxy) }
-  if (patch.customBypassTargets !== undefined)
-    patch = { ...patch, customBypassTargets: normalizeCustomBypassTargets(patch.customBypassTargets) }
-  const next = { ...loadSettings(), ...patch }
+  // SECURITY (M2): the renderer calls this via IPC — never merge its patch
+  // blindly (mass assignment would let a compromised renderer flip
+  // autoLaunch, hide the window to tray, or spoof activeStrategyId/fakes).
+  // Only whitelisted keys with strictly validated values reach the disk.
+  const clean = sanitizeSettingsPatch(patch)
+  const next = { ...loadSettings(), ...clean }
   persistSettings(next)
   applyAutoLaunch(next.autoLaunch, next.startMinimizedToTray)
   emitSettingsChanged(next)
   return next
+}
+
+/**
+ * Boolean settings the renderer may toggle. Every other key is dropped.
+ * Pure — covered by unit tests.
+ */
+const BOOLEAN_SETTING_KEYS = [
+  'autoLaunch',
+  'startMinimizedToTray',
+  'minimizeToTrayOnClose',
+  'logsEnabled',
+  'showTrayIcon',
+  'trayStrategyMenu',
+  'trayServiceMenu',
+  'trayNavigateMenu',
+  'trayGameFilterMenu',
+  'trayIPSetMenu',
+  'trayToolsMenu',
+  'trayQuickSettings'
+] as const
+
+/** Fake `.bin` names (same alphabet as the strict `replaceFake` IPC path). */
+const FAKE_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/
+
+/**
+ * True for a syntactically valid strategy id. Ids come from `.bat`
+ * basenames (e.g. `general (ALT)`), so spaces/parens/dots are legal —
+ * only path separators, control chars and parent refs are rejected.
+ * Existence against `listStrategies()` is additionally enforced on the IPC
+ * layer (`saveSettings` handler). Pure — covered by unit tests.
+ */
+export function isValidSettingsStrategyId(value: string): boolean {
+  if (value.length === 0 || value.length > 128) return false
+  if (value.includes('/') || value.includes('\\')) return false
+  if (/[\0-\x1f\x7f]/.test(value)) return false
+  if (value === '.' || value === '..' || /(^|[\\/])\.\.([\\/]|$)/.test(value)) return false
+  return true
+}
+
+/**
+ * Reduce an untrusted settings patch (renderer IPC input) to whitelisted,
+ * strictly validated keys. Unknown keys and mistyped values are dropped
+ * (the stored value survives) instead of coerced. Pure.
+ */
+export function sanitizeSettingsPatch(patch: unknown): Partial<AppSettings> {
+  if (patch == null || typeof patch !== 'object') return {}
+  const raw = patch as Record<string, unknown>
+  const out: Partial<AppSettings> = {}
+  for (const key of BOOLEAN_SETTING_KEYS) {
+    const v = raw[key]
+    if (v === undefined) continue
+    // Strict booleans only: no truthy-coercion (`"yes"`/`1` must not flip
+    // autostart or hide the window).
+    if (typeof v !== 'boolean') continue
+    ;(out as Record<string, unknown>)[key] = v
+  }
+  if (raw.locale !== undefined) out.locale = normalizeLocale(raw.locale)
+  if (raw.theme !== undefined) out.theme = normalizeTheme(raw.theme)
+  if (raw.activeStrategyId !== undefined) {
+    const v = raw.activeStrategyId
+    if (v === null) out.activeStrategyId = null
+    else if (typeof v === 'string' && isValidSettingsStrategyId(v)) out.activeStrategyId = v
+    // Invalid ids are dropped (stored selection survives).
+  }
+  for (const key of ['discordFake', 'gameFake'] as const) {
+    const v = raw[key]
+    if (v === undefined) continue
+    if (v === null) out[key] = null
+    else if (typeof v === 'string' && FAKE_NAME_RE.test(v)) out[key] = v
+    // Anything else is dropped — same alphabet as `replaceFake`.
+  }
+  if (raw.tgProxy !== undefined) out.tgProxy = normalizeTgProxySettings(raw.tgProxy)
+  if (raw.customBypassTargets !== undefined)
+    out.customBypassTargets = normalizeCustomBypassTargets(raw.customBypassTargets)
+  return out
 }
 
 /**

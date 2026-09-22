@@ -453,7 +453,39 @@ export function registerIpcHandlers(): void {
       }
       throw new Error('Administrator rights are required to update the system hosts file. Click "Restart as administrator" and retry.')
     }
-    await applyHosts(remoteContent)
+    // SECURITY (M3): the renderer is untrusted — its bytes must never be
+    // written blindly into a system file (DNS hijack via a compromised
+    // renderer). Re-fetch the upstream block in main and write only that;
+    // the renderer value is merely a staleness hint and is never used.
+    const provided = typeof remoteContent === 'string' ? remoteContent : ''
+    let contentToWrite: string
+    try {
+      const fresh = await checkHosts()
+      if (provided !== fresh.remoteContent) {
+        warn(
+          'app',
+          `applyHosts: renderer content differs from fresh upstream ` +
+            `(renderer ${provided.length}B vs upstream ${fresh.remoteContent.length}B) — writing fresh upstream only.`
+        )
+      }
+      contentToWrite = fresh.remoteContent
+    } catch (e) {
+      // Offline fallback: the only other trust anchor is the bundled copy
+      // shipped with the app. Arbitrary renderer bytes are never accepted.
+      warn('app', `applyHosts: upstream re-check failed (${(e instanceof Error ? e.message : String(e)).slice(0, 200)}) — trying bundled copy.`)
+      let bundled = ''
+      try {
+        bundled = fs.readFileSync(path.join(getBundledAssetsDir(), 'service', 'hosts'), 'utf8')
+      } catch {
+        bundled = ''
+      }
+      if (!bundled || provided !== bundled) {
+        throw new Error('Hosts content could not be re-verified (offline?) — re-run "Update Hosts" online and retry.')
+      }
+      warn('app', 'applyHosts: offline — renderer content matches the bundled copy, applying it.')
+      contentToWrite = bundled
+    }
+    await applyHosts(contentToWrite)
     sendLog('app', 'info', 'System Hosts updated (backup: hosts.zapret-gui.bak).')
     return true
   })
@@ -631,7 +663,17 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.getSettings, async () => loadSettings())
-  ipcMain.handle(IPC.saveSettings, async (_e, patch: Partial<AppSettings>) => saveSettings(patch))
+  ipcMain.handle(IPC.saveSettings, async (_e, patch: Partial<AppSettings>) => {
+    // SECURITY (M2): the renderer must only select a strategy that actually
+    // exists — syntax is already enforced by sanitizeSettingsPatch, here we
+    // additionally reject unknown ids so a compromised renderer cannot spoof
+    // the stored selection. Internal callers bypass IPC (direct saveSettings).
+    const p = (patch ?? {}) as Partial<AppSettings>
+    if (p.activeStrategyId !== undefined && p.activeStrategyId !== null && !findStrategy(p.activeStrategyId)) {
+      throw new Error(`Unknown strategy: ${String(p.activeStrategyId).slice(0, 80)}`)
+    }
+    return saveSettings(p)
+  })
 
   // -- Built-in Telegram MTProto→WS proxy (src/main/tg-proxy.ts) --
   ipcMain.handle(IPC.tgProxyStart, async () => {

@@ -236,6 +236,11 @@ export interface HostsCheck {
 /** Download upstream hosts and compare first/last lines (like service.bat). */
 export async function checkHosts(): Promise<HostsCheck> {
   const remote = await fetchText(`${URLS.hostsTxt}?t=${Date.now()}`, 15000)
+  // SECURITY (M3): the fetched block is later written into a system file as
+  // root/admin — reject malformed content here so a poisoned upstream (or a
+  // MITM serving garbage) cannot smuggle control chars / shell metachars /
+  // overlong lines into the hosts writer.
+  validateHostsContent(remote)
   const remoteLines = remote.split(/\r?\n/).filter((l) => l.length > 0)
   const firstLine = remoteLines[0] ?? ''
   const lastLine = remoteLines[remoteLines.length - 1] ?? ''
@@ -349,6 +354,62 @@ export function isStrategyManagedBinFile(fileName: string): boolean {
 }
 
 /**
+ * Validate a hosts block before it may touch the system hosts file.
+ * Every non-empty, non-comment line must be `IP whitespace hostname…`
+ * (IPv4/IPv6 + DNS-safe names), bounded in length and count, free of
+ * control characters. Returns the input unchanged when valid, throws
+ * otherwise. Pure — covered by unit tests.
+ */
+export function validateHostsContent(content: unknown): string {
+  if (typeof content !== 'string' || content.length === 0 || content.length > 1024 * 1024) {
+    throw new Error('Invalid hosts content')
+  }
+  const lines = content.split(/\r?\n/)
+  if (lines.length > 100_000) throw new Error('Invalid hosts content: too many lines')
+  let nonEmpty = 0
+  for (const line of lines) {
+    if (line.length > 1024) throw new Error('Invalid hosts content: line too long')
+    if (/[\0-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(line)) throw new Error('Invalid hosts content: control characters')
+    const trimmed = line.trim()
+    if (trimmed === '') continue
+    if (trimmed.startsWith('#')) continue
+    nonEmpty += 1
+    const parts = trimmed.split(/\s+/)
+    if (parts.length < 2 || parts.length > 33) throw new Error(`Invalid hosts content: malformed line: ${trimmed.slice(0, 80)}`)
+    const [ip, ...names] = parts as [string, ...string[]]
+    if (!isValidHostsIp(ip)) throw new Error(`Invalid hosts content: bad IP: ${ip.slice(0, 64)}`)
+    for (const name of names) {
+      if (!isValidHostsName(name)) throw new Error(`Invalid hosts content: bad hostname: ${name.slice(0, 80)}`)
+    }
+  }
+  if (nonEmpty === 0) throw new Error('Invalid hosts content: no entries')
+  return content
+}
+
+/** True for an IPv4/IPv6 literal allowed in a hosts line. Pure. */
+function isValidHostsIp(ip: string): boolean {
+  if (ip.includes(':')) {
+    // IPv6: hex groups + colons only, at least two colons, max length bound.
+    if (ip.length > 45 || !/^[0-9a-fA-F:.]+$/.test(ip)) return false
+    const colons = (ip.match(/:/g) ?? []).length
+    if (colons < 2 || colons > 7) return false
+    if (/\.\.|:.*:.*\..*\./.test(ip) && !/^[0-9a-fA-F:.]+$/.test(ip)) return false
+    return true
+  }
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip)
+  if (!m) return false
+  return m.slice(1).every((octet) => Number(octet) <= 255)
+}
+
+/** True for a DNS-safe hostname (single-label like `localhost` allowed). Pure. */
+function isValidHostsName(name: string): boolean {
+  if (name.length === 0 || name.length > 253) return false
+  if (!/^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(name)) return false
+  if (name.includes('..')) return false
+  return true
+}
+
+/**
  * Apply upstream hosts content into the system hosts file.
  * Existing zapret block (between first/last marker lines) is replaced;
  * otherwise the block is appended. A `.zapret-gui.bak` backup is kept.
@@ -361,9 +422,9 @@ export function isStrategyManagedBinFile(fileName: string): boolean {
  * in some antiviruses.
  */
 export async function applyHosts(remoteContent: string, opts?: { hostsPath?: string }): Promise<void> {
-  if (typeof remoteContent !== 'string' || remoteContent.length === 0 || remoteContent.length > 1024 * 1024) {
-    throw new Error('Invalid hosts content')
-  }
+  // Line-level validation (IPs/hostnames, no control chars, bounded size):
+  // this content lands in a root/admin-owned system file.
+  validateHostsContent(remoteContent)
   const hostsPath = opts?.hostsPath ?? getSystemHostsPath()
   let current: string
   try {

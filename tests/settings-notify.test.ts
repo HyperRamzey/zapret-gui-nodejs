@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
 import { app } from 'electron'
-import { loadSettings, saveSettings, onSettingsChanged } from '../src/main/settings'
+import { loadSettings, saveSettings, onSettingsChanged, sanitizeSettingsPatch, isValidSettingsStrategyId } from '../src/main/settings'
 import type { AppSettings } from '../src/shared/types'
 
 // Isolate fs writes: point appData at a fresh tmp dir (setup.ts maps it to cwd).
@@ -61,8 +61,7 @@ describe('onSettingsChanged', () => {
     expect(seen).toHaveLength(0)
   })
 
-  it('migrates legacy trayTuningMenu to game/ipset flags', () => {
-    const file = path.join(tmp, 'zapret-gui', 'settings.json')
+  it('migrates legacy trayTuningMenu to game/ipset flags', () => {    const file = path.join(tmp, 'zapret-gui', 'settings.json')
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, JSON.stringify({ trayTuningMenu: false }), 'utf8')
     const s = loadSettings()
@@ -73,5 +72,49 @@ describe('onSettingsChanged', () => {
     const s2 = loadSettings()
     expect(s2.trayGameFilterMenu).toBe(true)
     expect(s2.trayIPSetMenu).toBe(false)
+  })
+})
+
+describe('sanitizeSettingsPatch (M2 whitelist)', () => {
+  it('keeps whitelisted booleans, drops unknown keys and non-boolean values', () => {
+    const clean = sanitizeSettingsPatch({
+      showTrayIcon: false,
+      autoLaunch: 'yes',
+      trayStrategyMenu: 1,
+      bogus: 1,
+      __proto__: { admin: true }
+    } as unknown as Partial<AppSettings>)
+    expect(clean.showTrayIcon).toBe(false)
+    expect(clean.autoLaunch).toBeUndefined()
+    expect(clean.trayStrategyMenu).toBeUndefined()
+    expect((clean as Record<string, unknown>).bogus).toBeUndefined()
+  })
+
+  it('validates strategy ids and fake names', () => {
+    expect(isValidSettingsStrategyId('general (ALT)')).toBe(true)
+    expect(isValidSettingsStrategyId('../evil')).toBe(false)
+    expect(isValidSettingsStrategyId('a/b')).toBe(false)
+    expect(isValidSettingsStrategyId('')).toBe(false)
+    expect(isValidSettingsStrategyId('x'.repeat(129))).toBe(false)
+
+    expect(sanitizeSettingsPatch({ activeStrategyId: 'general (ALT)' }).activeStrategyId).toBe('general (ALT)')
+    expect(sanitizeSettingsPatch({ activeStrategyId: null }).activeStrategyId).toBe(null)
+    expect(sanitizeSettingsPatch({ activeStrategyId: '../evil' }).activeStrategyId).toBeUndefined()
+
+    expect(sanitizeSettingsPatch({ discordFake: 'tls_clienthello_1' }).discordFake).toBe('tls_clienthello_1')
+    expect(sanitizeSettingsPatch({ gameFake: 'bad name!' }).gameFake).toBeUndefined()
+    expect(sanitizeSettingsPatch({ gameFake: null }).gameFake).toBe(null)
+  })
+
+  it('saveSettings ignores hostile patches and keeps stored values', () => {
+    const before = loadSettings()
+    const next = saveSettings({
+      autoLaunch: 'yes',
+      activeStrategyId: '../../evil',
+      discordFake: 'bad name!'
+    } as unknown as Partial<AppSettings>)
+    expect(next.autoLaunch).toBe(before.autoLaunch)
+    expect(next.activeStrategyId).toBe(before.activeStrategyId)
+    expect(next.discordFake).toBe(before.discordFake)
   })
 })

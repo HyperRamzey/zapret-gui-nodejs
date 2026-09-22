@@ -7,6 +7,7 @@ import {
   getBundledZapretVersion,
   getSystemHostsPath,
   applyHosts,
+  validateHostsContent,
   upstreamSourceArchiveUrl,
   isValidEngineTag,
   engineAssetUrl,
@@ -167,5 +168,43 @@ describe('applyHosts', () => {
   it('throws a helpful error for a missing hosts file', async () => {
     const missing = path.join(os.tmpdir(), `zapret-no-such-hosts-${Date.now()}`)
     await expect(applyHosts(BLOCK_V1, { hostsPath: missing })).rejects.toThrow(/system hosts file/)
+  })
+
+  it('rejects lines that are not IP + hostname (M3)', async () => {
+    const hostsPath = makeHosts('# original\n')
+    await expect(applyHosts('not-an-ip example.com\n', { hostsPath })).rejects.toThrow('Invalid hosts content')
+    await expect(applyHosts('1.2.3.4 bad..host!!\n', { hostsPath })).rejects.toThrow('Invalid hosts content')
+    await expect(applyHosts('1.2.3.4 ok.com; rm -rf /\n', { hostsPath })).rejects.toThrow('Invalid hosts content')
+    // File left untouched by rejected writes.
+    expect(fs.readFileSync(hostsPath, 'utf8')).toBe('# original\n')
+  })
+})
+
+describe('validateHostsContent (M3)', () => {
+  it('accepts comments, IPv4 and IPv6 entries', () => {
+    const block = '# block\n140.82.121.3 github.com\n2606:50c0:8000::154 raw.githubusercontent.com\n127.0.0.1 localhost\n'
+    expect(validateHostsContent(block)).toBe(block)
+  })
+
+  it('accepts the bundled service/hosts copy', () => {
+    const file = path.join(process.cwd(), 'bundled-assets', 'service', 'hosts')
+    if (!fs.existsSync(file)) return
+    expect(() => validateHostsContent(fs.readFileSync(file, 'utf8'))).not.toThrow()
+  })
+
+  it('rejects empty, comment-only, oversized and control-char content', () => {
+    expect(() => validateHostsContent('')).toThrow('Invalid hosts content')
+    expect(() => validateHostsContent('# only a comment\n')).toThrow('Invalid hosts content')
+    expect(() => validateHostsContent('1.2.3.4 ok.com\x07\n')).toThrow('Invalid hosts content')
+    expect(() => validateHostsContent(`${'1.2.3.4 ok.com\n'.repeat(10)}${'x'.repeat(1024 * 1024)}`)).toThrow(
+      'Invalid hosts content'
+    )
+  })
+
+  it('rejects malformed IPs and hostnames', () => {
+    expect(() => validateHostsContent('999.1.1.1 evil.com\n')).toThrow(/bad IP/)
+    expect(() => validateHostsContent('1.2.3.4\n')).toThrow(/malformed line/)
+    expect(() => validateHostsContent('1.2.3.4 -bad-.com\n')).toThrow(/bad hostname/)
+    expect(() => validateHostsContent('1.2.3.4 ok.com extra;bad\n')).toThrow(/bad hostname/)
   })
 })
