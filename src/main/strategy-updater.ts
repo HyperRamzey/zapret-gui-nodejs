@@ -315,14 +315,37 @@ const LINUX_ONLY_BIN_LOWER = new Set((LINUX_ONLY_BIN_FILES as readonly string[])
 
 /**
  * True for engine binaries foreign to the current OS (`winws.exe`/`WinDivert`
- * on Linux, `nfqws` on Windows). `updateStrategiesFromGithub` syncs the
- * upstream `bin/` tree verbatim — without this the Linux data dir collects
- * megabytes of never-executed Windows binaries (plus a `_backup` snapshot
- * of them on every update). Mirrors the seeding filter in `paths.ts`. Pure.
+ * on Linux, `nfqws` on Windows). Mirrors the seeding filter in `paths.ts`.
+ * Pure.
+ *
+ * NOTE: kept for seeding/tests. `updateStrategiesFromGithub` no longer syncs
+ * executables at all (see `isStrategyManagedBinFile`) — engine binaries are
+ * owned exclusively by the bol-van/zapret engine updater.
  */
 export function isForeignEngineBinary(fileName: string): boolean {
   const lower = fileName.toLowerCase()
   return isLinux() ? WINDOWS_ONLY_BIN_LOWER.has(lower) : LINUX_ONLY_BIN_LOWER.has(lower)
+}
+
+/**
+ * True for `bin/` files the strategy updater is allowed to touch: fake
+ * DPI payloads (`*.bin`, e.g. `tls_clienthello_*.bin`, `quic_initial_*.bin`,
+ * `stun*.bin`). Strategies reference them via `<BIN>/...`, so they must
+ * follow the upstream snapshot — otherwise a refreshed strategy can point
+ * at a missing payload.
+ *
+ * Everything else in `bin/` is an executable/engine artifact (`winws.exe`,
+ * `WinDivert.*`, `cygwin1.dll`, `mdig.exe`, `nfqws`, `engine-version.txt`,
+ * …) and must never be replaced by the Flowseal `main` snapshot: executables
+ * are owned exclusively by the pinned bol-van/zapret engine updater
+ * (`updateEngineToTag`). `ACTIVE_*.bin` files are user selection (copies of
+ * another fake) and are never overwritten either. Pure.
+ */
+export function isStrategyManagedBinFile(fileName: string): boolean {
+  const base = fileName.split(/[\\/]/).pop() ?? fileName
+  if (!/\.bin$/i.test(base)) return false
+  if (/^ACTIVE_/i.test(base)) return false
+  return true
 }
 
 /**
@@ -567,9 +590,16 @@ export async function getBranchHeadSha(): Promise<string | null> {
 }
 
 /**
- * Download the upstream branch snapshot, back up current bin/lists/utils/
- * strategies into `data/_backup/<timestamp>`, extract the archive via
- * PowerShell `Expand-Archive`, then refresh strategies + copy binaries/lists.
+ * Download the upstream branch snapshot, back up current lists/utils/
+ * strategies (+ `bin/*.bin` fakes) into `data/_backup/<timestamp>`,
+ * extract the archive via PowerShell `Expand-Archive`, then refresh
+ * strategies + lists/utils + fake payloads.
+ *
+ * Executables are deliberately never touched here: `bin/winws.exe`,
+ * `WinDivert.*`, `cygwin1.dll`, `nfqws`, … are owned exclusively by the
+ * pinned bol-van/zapret engine updater (`updateEngineToTag`). A strategy
+ * refresh must not silently replace the engine with whatever happens to
+ * sit on Flowseal `main`.
  * Emits 0..100 progress through `onProgress`.
  */
 export async function updateStrategiesFromGithub(
@@ -593,12 +623,15 @@ export async function updateStrategiesFromGithub(
 
   const backupDir = path.join(dataDir, '_backup', new Date().toISOString().replace(/[:.]/g, '-'))
   fs.mkdirSync(backupDir, { recursive: true })
-  for (const sub of ['bin', 'lists', 'utils', 'strategies']) {
+  for (const sub of ['lists', 'utils', 'strategies']) {
     const src = path.join(dataDir, sub)
     if (fs.existsSync(src)) {
       await copyRecursive(src, path.join(backupDir, sub))
     }
   }
+  // bin: back up only the fake payloads we may overwrite (*.bin) — never
+  // the executables (they are not touched by this update, see below).
+  backupBinFakes(dataDir, backupDir)
   pruneOldBackups(dataDir)
   say(`Backup saved to ${backupDir}`)
 
@@ -612,8 +645,10 @@ export async function updateStrategiesFromGithub(
   const root = singleChildDir(extractDir) ?? extractDir
   const filesUpdated: string[] = []
 
-  // 1. copy binaries + lists + utils (only changed files, by size+mtime heuristic → hash compare)
-  for (const sub of ['bin', 'lists', 'utils']) {
+  // 1. copy lists + utils + bin/*.bin fakes (only changed files → hash compare).
+  // Executables are never synced here (see isStrategyManagedBinFile):
+  // winws.exe / WinDivert / cygwin / nfqws belong to the pinned engine.
+  for (const sub of ['lists', 'utils']) {
     const srcDir = path.join(root, sub)
     if (!fs.existsSync(srcDir)) continue
     const destDir = path.join(dataDir, sub)
@@ -621,13 +656,29 @@ export async function updateStrategiesFromGithub(
       const relP = path.relative(srcDir, f)
       // Never clobber user lists.
       if (sub === 'lists' && /-user\.txt$/i.test(relP)) continue
-      // Never sync OS-foreign engine binaries (winws.exe/WinDivert on Linux).
-      if (sub === 'bin' && isForeignEngineBinary(path.basename(relP))) continue
       const dest = path.join(destDir, relP)
       if (!fs.existsSync(dest) || !filesEqual(f, dest)) {
         fs.mkdirSync(path.dirname(dest), { recursive: true })
         fs.copyFileSync(f, dest)
         filesUpdated.push(`${sub}/${relP}`)
+      }
+    }
+  }
+  // bin: fake payloads only (*.bin except ACTIVE_*). Strategies reference
+  // them via <BIN>/..., so new/changed payloads must follow the snapshot.
+  {
+    const srcDir = path.join(root, 'bin')
+    if (fs.existsSync(srcDir)) {
+      const destDir = path.join(dataDir, 'bin')
+      for (const f of walkFiles(srcDir)) {
+        const relP = path.relative(srcDir, f)
+        if (!isStrategyManagedBinFile(path.basename(relP))) continue
+        const dest = path.join(destDir, relP)
+        if (!fs.existsSync(dest) || !filesEqual(f, dest)) {
+          fs.mkdirSync(path.dirname(dest), { recursive: true })
+          fs.copyFileSync(f, dest)
+          filesUpdated.push(`bin/${relP}`)
+        }
       }
     }
   }
@@ -678,9 +729,48 @@ async function copyRecursive(src: string, dest: string): Promise<void> {
 }
 
 /**
+ * Back up only the `bin/*.bin` fake payloads a strategy update may
+ * overwrite (never executables — they are not touched, so snapshotting
+ * megabytes of `winws.exe`/`cygwin1.dll` on every refresh would be pure
+ * disk waste). Best-effort: must never fail the update itself.
+ */
+function backupBinFakes(dataDir: string, backupDir: string): void {
+  try {
+    const srcBin = path.join(dataDir, 'bin')
+    if (!fs.existsSync(srcBin)) return
+    const destBin = path.join(backupDir, 'bin')
+    let copied = false
+    for (const f of walkFiles(srcBin)) {
+      if (!isStrategyManagedBinFile(path.basename(f))) continue
+      const relP = path.relative(srcBin, f)
+      const dest = path.join(destBin, relP)
+      try {
+        fs.mkdirSync(path.dirname(dest), { recursive: true })
+        fs.copyFileSync(f, dest)
+        copied = true
+      } catch {
+        /* best-effort per file */
+      }
+    }
+    // Keep the backup layout predictable: an empty bin/ dir means
+    // "no fakes to restore", still fine to leave in place.
+    if (!copied) {
+      try {
+        fs.mkdirSync(destBin, { recursive: true })
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
  * Keep only the newest `keep` entries under `data/_backup`.
- * Every strategies/engine update snapshots all of bin/lists/utils/
- * strategies — without pruning this grows without bound (disk leak).
+ * Every strategies/engine update snapshots data (strategies update:
+ * lists/utils/strategies + bin fakes; engine update: bin) — without
+ * pruning this grows without bound (disk leak).
  * Backup names are ISO timestamps, so lexicographic order is chronological.
  * Best-effort: pruning must never fail the update itself.
  */

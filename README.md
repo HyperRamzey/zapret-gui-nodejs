@@ -181,12 +181,12 @@ TypeScript-порт оригинала,
 * `checkZapretUpdates()` — сравнивает локальный `bundled-assets/service/version.txt` (сейчас `1.10.2`, это версия **zapret-данных**, не приложения!) с upstream `.service/version.txt` через `compareVersions()`
 * `updateIPSetList()` — качает `.service/ipset-service.txt` → `lists/ipset-all.txt`, удаляет stale `.backup`, возвращает `{ lines, bytes }`
 * `checkHosts()` / `applyHosts()` — качает `.service/hosts`, сравнивает первую/последнюю строки с системным `hosts`, при применении заменяет zapret-блок или дописывает + бэкап `hosts.zapret-gui.bak`
-* `updateStrategiesFromGithub()`:
+* `updateStrategiesFromGithub()` — только настройки обхода, без исполняемых файлов:
   1. Снапшот исходников ветки `UPSTREAM_BRANCH` через `codeload.github.com/.../zip/refs/heads/<branch>` (не release-ассеты) + `branchHeadApi` для SHA
   2. Скачивание с прогрессом `zapret:on-download-progress` (0–80%)
-  3. Бэкап `bin/lists/utils/strategies` → `data/_backup/<timestamp>` (хранятся последние 5)
+  3. Бэкап `lists/utils/strategies` (+ только `bin/*.bin`-фейки) → `data/_backup/<timestamp>` (хранятся последние 5)
   4. `Expand-Archive` через PowerShell, обход одного top-level каталога
-  5. Копирование только изменённых файлов (сравнение по размеру + хешу), `lists/*-user.txt` никогда не затираются
+  5. Копирование только изменённых файлов (сравнение по размеру + хешу), `lists/*-user.txt` никогда не затираются; из `bin/` синкаются только фейк-пейлоады `*.bin` (кроме `ACTIVE_*`), `.exe`/`.dll`/`.sys`/`nfqws` никогда не трогаются (движок обновляется только через `updateEngineToTag`)
   6. Регенерация `strategies/*.json` из `*.bat` корня архива (`origin: 'bundled'`, `service.bat` исключён, импортированные стратегии с тем же id не затираются)
 * Движок `bol-van/zapret` (`listEngineReleases/checkEngineUpdates/updateEngineToTag`):
   выбор тега `/^v\d[\w.\-]{0,31}$/` → `zapret-<tag>.zip` → синхронизация только allowlist `ENGINE_BIN_FILES`
