@@ -15,9 +15,6 @@ win:
   icon: bundled-assets/icon.ico
   target:
     - nsis
-  # Publisher shown in "Programs and Features" / SmartScreen and embedded
-  # into app-update.yml for electron-updater.
-  publisherName: avencores
   # No UAC prompt on launch: the app runs as the invoking user and only
   # re-asks for elevation on demand (AdminBanner → "relaunch as admin").
   requestedExecutionLevel: asInvoker
