@@ -1,10 +1,21 @@
 {
   "name": "zapret-gui",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Desktop GUI for zapret DPI bypass (Discord / YouTube / Telegram) — Electron + React + TypeScript",
-  "author": "avencores",
+  "author": {
+    "name": "avencores",
+    "url": "https://github.com/AvenCores"
+  },
+  "homepage": "https://github.com/AvenCores/zapret-gui-nodejs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AvenCores/zapret-gui-nodejs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AvenCores/zapret-gui-nodejs/issues"
+  },
   "desktopName": "com.zapret.gui",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "private": true,
   "main": "out/main/index.js",
   "scripts": {

@@ -15,13 +15,21 @@ win:
   icon: bundled-assets/icon.ico
   target:
     - nsis
+  # Publisher shown in "Programs and Features" / SmartScreen and embedded
+  # into app-update.yml for electron-updater.
+  publisherName: avencores
   # No UAC prompt on launch: the app runs as the invoking user and only
   # re-asks for elevation on demand (AdminBanner → "relaunch as admin").
   requestedExecutionLevel: asInvoker
   # Apply icon + metadata via rcedit, but skip code signing (no certificate).
   signExecutable: false
+  # Unsigned builds cannot pass Authenticode verification — without this
+  # electron-updater refuses to install downloaded updates on Windows.
+  verifyUpdateCodeSignature: false
 nsis:
   oneClick: false
+  # Show the GPL-3.0 text as the installer EULA page.
+  license: LICENSE
   # Single deterministic installer name (matches the release notes pattern).
   artifactName: Zapret-GUI-Setup-${version}.${ext}
   allowToChangeInstallationDirectory: true
