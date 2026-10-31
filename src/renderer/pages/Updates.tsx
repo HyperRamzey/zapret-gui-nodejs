@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useUi } from '../store'
 import { Badge, Btn, Card, ProgressBar, Row, Spinner } from '../components/ui'
 import type { AppUpdateInfo, DownloadProgress, EngineRelease, EngineVersionInfo, UpdateInfo } from '../../shared/types'
+import { URLS } from '../../shared/constants'
 
 export default function Updates(): React.JSX.Element {
   const { t, setError, status } = useUi()
@@ -105,7 +106,7 @@ export default function Updates(): React.JSX.Element {
         availableVersion: v,
         updateAvailable: true,
         downloaded: false,
-        releasesUrl: prev?.releasesUrl ?? 'https://github.com/AvenCores/zapret-gui-nodejs/releases',
+        releasesUrl: prev?.releasesUrl ?? URLS.appReleases,
         checkedAt: new Date().toISOString()
       }))
     })
@@ -120,7 +121,7 @@ export default function Updates(): React.JSX.Element {
         availableVersion: prev?.availableVersion ?? v,
         updateAvailable: true,
         downloaded: false,
-        releasesUrl: prev?.releasesUrl ?? 'https://github.com/AvenCores/zapret-gui-nodejs/releases',
+        releasesUrl: prev?.releasesUrl ?? URLS.appReleases,
         checkedAt: new Date().toISOString()
       }))
     })
@@ -132,7 +133,7 @@ export default function Updates(): React.JSX.Element {
         availableVersion: v,
         updateAvailable: true,
         downloaded: true,
-        releasesUrl: prev?.releasesUrl ?? 'https://github.com/AvenCores/zapret-gui-nodejs/releases',
+        releasesUrl: prev?.releasesUrl ?? URLS.appReleases,
         checkedAt: new Date().toISOString()
       }))
     })
@@ -147,7 +148,7 @@ export default function Updates(): React.JSX.Element {
           availableVersion: null,
           updateAvailable: false,
           downloaded: false,
-          releasesUrl: prev?.releasesUrl ?? 'https://github.com/AvenCores/zapret-gui-nodejs/releases',
+          releasesUrl: prev?.releasesUrl ?? URLS.appReleases,
           checkedAt
         }
       })

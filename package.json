@@ -6,13 +6,13 @@
     "name": "avencores",
     "url": "https://github.com/AvenCores"
   },
-  "homepage": "https://github.com/AvenCores/zapret-gui-nodejs",
+  "homepage": "https://github.com/createprojectile/zapret-gui-nodejs",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AvenCores/zapret-gui-nodejs.git"
+    "url": "git+https://github.com/createprojectile/zapret-gui-nodejs.git"
   },
   "bugs": {
-    "url": "https://github.com/AvenCores/zapret-gui-nodejs/issues"
+    "url": "https://github.com/createprojectile/zapret-gui-nodejs/issues"
   },
   "desktopName": "com.zapret.gui",
   "license": "GPL-3.0-only",

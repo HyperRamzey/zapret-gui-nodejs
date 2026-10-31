@@ -48,7 +48,7 @@ export const WINDOWS_ONLY_BIN_FILES = [...ENGINE_BIN_FILES] as const
 export const LINUX_ONLY_BIN_FILES = [...ENGINE_LINUX_BIN_FILES] as const
 export const ENGINE_VERSION_FILE = 'engine-version.txt'
 
-export const APP_OWNER = 'AvenCores'
+export const APP_OWNER = 'createprojectile'
 export const APP_REPO = 'zapret-gui-nodejs'
 
 export const URLS = {
